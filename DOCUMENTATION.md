@@ -2,8 +2,6 @@
 
 Current state of the build, as of the latest working session.
 
-Two source specifications are implemented:
-
 Built from two internal specifications, which are not distributed with this
 repository.
 
@@ -14,8 +12,8 @@ repository.
 
 The somatic profile (S01–S14) is deliberately **not** built.
 
-**Scale:** ~15,600 lines of backend Python, ~2,200 lines of frontend JavaScript,
-~3,900 lines of tests. 288 tests passing. 51 API endpoints. 27 database tables.
+**Scale:** ~16,200 lines of backend Python, ~2,400 lines of frontend JavaScript,
+~4,400 lines of tests. 316 tests passing. 52 API endpoints. 27 database tables.
 
 ---
 
@@ -37,6 +35,35 @@ there is nothing else to do to see it working.
 The research fixture plants six causal variants at OR 1.9, two populations with
 differing allele frequencies, 30 parent-offspring pairs and per-variant gene
 annotations — so every analysis has a known right answer to check against.
+
+### 1.1 Getting your own data in
+
+**Research Mode — from the browser.** *Uploaded data → Register a dataset*.
+
+| Field | Accepts |
+|---|---|
+| Genotype | VCF / VCF.gz (one file) · PLINK1 (select `.bed` `.bim` `.fam` **together**) |
+| Phenotype | CSV/TSV keyed by `sample_id`. Optional — without it only descriptive analyses unlock |
+| Genome build | Explicit, never inferred. GRCh37 and GRCh38 positions overlap, so a wrong guess silently corrupts every annotation |
+| Consent | Attestation, enforced server-side before a byte is parsed |
+
+Files post as multipart to `POST /api/research/projects/{id}/datasets/upload`,
+land in `data/uploads/`, and go straight through validation and profiling — a
+dataset that fails validation is rejected rather than stored in a broken state.
+A collapsed *"the file is already on the server"* panel keeps the older
+path-based route (`/datasets/ingest`) for files too large to stream through a
+browser.
+
+**Lab Mode — CLI only.** VariMAT ingest has no upload UI (see §12):
+
+```bash
+.venv/bin/python -m backend.cli ingest data/varimat --clinical data/clinical
+```
+
+It reads `*.tsv|txt|csv` (optionally `.gz`) recursively, requiring `CHROM`,
+`START`, `REF`, `ALT`, `VARCLASS` and `VARIANT_FILTER_STATUS`; sample, pipeline,
+caller and build come from the filename. The clinical sidecar is a 23-column
+CSV/JSON keyed by `sample_id`.
 
 ---
 
@@ -63,13 +90,18 @@ The right-hand panel shows the live subject count and a funnel attributing every
 excluded subject to exactly one choice.
 
 ### ② Review
-Three trust checks, each pass/warn and expandable in place:
+Four trust checks, each pass/warn and expandable in place:
 
 | Check | Asks |
 |---|---|
+| **Sample quality** | Is any sample contaminated, swapped or under-covered? |
 | **Independence** | Is it one subject per family, or are relatives inflating the rates? |
 | **Coverage** | Does every gene have a real denominator, or are some provisional? |
 | **Provenance** | Is the cohort mixing reference builds or pipeline versions? |
+
+Sample quality comes first because it invalidates everything under it: a
+contaminated sample contributes spurious heterozygous calls to every rate the
+other three checks are busy validating. See §5.1.
 
 The coverage check embeds the full per-gene denominator table (assayed /
 provisional / not assayed / basis). In the previous build this lived in a modal
@@ -179,6 +211,42 @@ test that tries to break it.
 | Project isolation | `project_id` column on every dataset, job and result | Isolation is a column, not a filter a caller can forget |
 | Cohort resolution is serialised | `cohort.COHORT_LOCK` | Temp tables are connection-scoped; concurrent requests could return another cohort's numbers |
 | One compilation never produces a number | `compiler.validate` rejects payloads containing figures | A wrong number sounds authoritative and is unverifiable |
+| QC ratios are computed over the full call set | `varimat.compute_qc`, stored on `run` | `finding` keeps only the reviewable ~2%; a Ti/Tv from that is noise, not a metric |
+
+### 5.1 Sample QC
+
+A contaminated sample or a sample swap invalidates every rate computed over it,
+so this runs before analysis rather than after a result looks strange.
+
+| Metric | Catches |
+|---|---|
+| **Ti/Tv** | Contamination and false-positive inflation. Real calls are transition-biased (~2.0 exome, ~3.0 panel); noise tends toward the random 0.5 |
+| **Het/Hom** | Contamination and sample mixture — two genomes make one look heterozygous everywhere |
+| **Mean het VAF** | Allele balance. A true heterozygote centres on 0.5; contamination pulls it off-centre |
+| **Mean depth / % ≥20×** | Under-coverage, which produces false negatives rather than false positives |
+| **X het rate** | Sex concordance — a male sample heterozygous across X is mislabelled or mixed |
+| **Pipeline `qc_status`** | The lab's own verdict, which outranks anything derived here |
+
+**Thresholds are cohort-relative, not absolute.** A panel, an exome and a genome
+have genuinely different expected values, so a fixed cut-off would fail an entire
+assay type for being itself. Outliers are measured in median absolute deviations
+from the cohort median — warn at 3, fail at 5 — with MAD rather than standard
+deviation because a handful of extreme values inflate an SD enough to hide
+themselves. Two absolute floors still apply, for cases a uniformly bad cohort
+would otherwise normalise: Ti/Tv below 1.0 and % ≥20× below 80.
+
+Every flag states the observed value and what it was compared against; "this
+sample looks odd" is not actionable.
+
+**Where the numbers come from.** `compute_qc` runs in the VariMAT loader over
+every PASS call *before* the reviewable filter, and the results are stored as
+`qc_*` columns on `run`. This was a loader change, not a query: §3.2 archives
+~98% of rows after fingerprinting and `finding` retains only the reviewable
+handful, so computing a ratio from stored findings gives a number derived from a
+few dozen calls — 597 of 606 samples came back "not assessable" when tried that
+way. The service prefers the stored per-run metrics, falls back to findings only
+when there are enough of them, and **always reports `metrics_basis`** so a
+panel-sized ratio can never be read as a genome-wide one.
 
 ---
 
@@ -232,6 +300,7 @@ backend/app/
   services/              lab analytics — every number is SQL
     cohort.py            the §G01 gating pipeline, COHORT_LOCK
     denominator.py       gene-specific denominators, coverage inspector
+    sampleqc.py          per-sample QC, cohort-relative MAD outliers (§5.1)
     carrier.py           diagnostic yield, carrier rates, dashboard
     zygosity.py          §G04
     analysis.py          §G05–G09
@@ -278,10 +347,14 @@ backend/tools/
 ### Data flow
 
 ```
-VariMAT files  ─┐
-clinical CSV   ─┴→ ingest → derived store → cohort engine → services → API → UI
-                                  ↑
-VCF / PLINK    ──→ validate → profile → capability matrix → job queue → analyses
+VariMAT files  ─┐   CLI only
+clinical CSV   ─┴─→ ingest ─→ derived store ─→ cohort engine ─→ services ─→ API ─→ UI
+                      │            ↑
+                   compute_qc ─────┘  (qc_* columns on `run`)
+
+VCF / PLINK ─→ upload ─→ validate ─→ profile ─→ capability matrix ─→ jobs ─→ analyses
+  (browser)                  │
+                       reject on failure, never store a broken dataset
 ```
 
 The analytics store is **derived and rebuildable**; it is never the system of
@@ -298,6 +371,12 @@ table), `run_fingerprint`, `finding`, `interpretation`, `gene_disease`,
 `test_code`, `test_code_gene`, `indication_gene` (the yield relevance gate),
 `cohort_def`, `cohort_snapshot`, `analysis_run`, `compilation_log`, `store_meta`.
 
+`run` also carries five per-sample QC columns written by the loader —
+`qc_n_called`, `qc_ti_tv`, `qc_het_hom`, `qc_mean_het_vaf`, `qc_x_het_rate` —
+alongside `mean_depth`, `pct_bases_20x` and the pipeline's own `qc_status`.
+They are computed over the **full PASS call set** at ingest because that
+population does not survive into `finding` (§5.1).
+
 **Research** — `project`, `dataset`, `dataset_sample`, `dataset_profile`,
 `dataset_capability`, `dataset_phenotype`, `capability_override`, `variant_set`,
 `analysis_job`, `analysis_result`.
@@ -310,7 +389,7 @@ would be tens of millions of rows for a few megabytes of array.
 
 ## 9. API
 
-51 endpoints. Grouped:
+52 endpoints. Grouped:
 
 **Lab cohort** — `POST /api/cohort/resolve`, `POST /api/cohort/suggestions`,
 `GET|POST|DELETE /api/cohorts`, `GET /api/cohorts/{id}/verify`
@@ -330,6 +409,10 @@ g_runs}`
 **Research** — `GET /api/research/meta`, projects, datasets (ingest / upload /
 capabilities / override / delete), jobs (submit / poll / result / cancel),
 `POST /api/research/power`, `GET /api/research/estimate`, variant sets
+
+`datasets/upload` is multipart and takes a **list** of genotype files, because a
+PLINK fileset is only readable as a set; `datasets/ingest` takes server-side
+paths instead. Both converge on the same validation and profiling path.
 
 **Admin** — `POST /api/admin/rebuild/{synthetic|varimat}`,
 `GET /api/admin/varimat/discover`
@@ -362,20 +445,23 @@ cohort stores criteria, never a member list.
 ## 11. Tests
 
 ```bash
-.venv/bin/python -m pytest tests/ -q      # 288 passing
+.venv/bin/python -m pytest tests/ -q      # 316 passing
 ```
 
 | File | Tests | Covers |
 |---|---|---|
 | `test_hand_count.py` | 6 | **Independent hand count (spec E03.9)** |
+| `test_cohort_engine.py` | 9 | Lock contract under concurrency, funnel attribution, pinned anchor |
 | `test_denominators.py` | 12 | Gene denominators, family independence, derived zygosity |
+| `test_sample_qc.py` | 12 | Ti/Tv and het/hom maths, MAD outliers, metrics basis |
 | `test_governance_gates.py` | 8 | Consent gates, SF enforcement, small-cell suppression |
-| `test_loader.py` | 15 | VariMAT dedup, reviewable subset, fingerprinting |
-| `test_compiler_and_repro.py` | 19 | Query compiler contract, reproducibility, manifest |
+| `test_upload.py` | 7 | Multipart upload, PLINK filesets, consent, path traversal |
+| `test_loader.py` | 26 | VariMAT dedup, reviewable subset, fingerprinting, QC |
+| `test_compiler_and_repro.py` | 24 | Query compiler contract, reproducibility, manifest |
 | `test_research_gating.py` | 21 | Upload validation, capability matrix, override, deletion |
 | `test_research_formats.py` | 39 | VCF and PLINK readers |
-| `test_research_glm.py` | 44 | Linear / logistic / Firth / HC3 / BH |
-| `test_research_genetics.py` | 28 | PCA, KING kinship, HWE exact, sex check |
+| `test_research_glm.py` | 56 | Linear / logistic / Firth / HC3 / BH |
+| `test_research_genetics.py` | 35 | PCA, KING kinship, HWE exact, sex check |
 | `test_research_skat_survival.py` | 61 | Davies, SKAT calibration, KM, Cox, competing risks |
 
 `test_hand_count.py` is the one that matters. It recomputes cohort membership,
@@ -393,6 +479,16 @@ to use cohort size fails it with `ALDOB: hand 69 vs tool 189`.
   records were hand-entered to match the prototype. Validity and penetrance
   calls must be replaced with a dated ClinGen export, and `gene_id` with an HGNC
   export, before any figure leaves the building.
+
+**Ingest surface**
+- **Lab Mode has no upload UI.** VariMAT ingest is CLI-only (§1.1). The work is
+  not a modal: ingest is multi-file, needs the clinical sidecar alongside it, and
+  runs fingerprint clustering over the result, so it wants a progress view rather
+  than a spinner.
+- **No database connector.** Both modes read files. `ingest.store.persist(bundle)`
+  — which takes dicts keyed by table name — is the seam a LIMS or warehouse
+  connector would write to; nothing else needs to change to feed the engine from
+  a live source.
 
 **Query compiler**
 - Rule-based, not an LLM. `compiler.py` implements the D01 contract and the
@@ -450,6 +546,11 @@ Kept because each one is a trap that would recur.
 | `{...blank_criteria}` shallow copy | "Clear all" and every compiled question inherited stale filters |
 | One shared analysis config form | Three of five analyses failed the moment anyone ran them from the UI |
 | Burden error said "no annotations" when a filter had removed everything | Sent users to re-annotate when the real fix was a threshold |
+| Upload endpoint took a single `UploadFile` for a PLINK triple | Kept only the last part, discarded the rest, then failed with an error naming the wrong missing file |
+| `cli synthetic` deleted the whole database file | Destroyed uploaded research datasets as a side effect of rebuilding lab demo data |
+| Ti/Tv computed from the `finding` table | 597 of 606 samples "not assessable" — the reviewable subset is far too small to support a ratio |
+| Funnel step 1 left unjoined to `run` | Un-sequenced subjects were blamed on whichever gate came next, usually consent |
+| `cohort_run` ignored the assay filter | A gene the chosen panel never looked at counted as "tested and clear" |
 
 ---
 
@@ -462,3 +563,5 @@ Kept because each one is a trap that would recur.
 - **Understand the safety model:** `backend/app/research/capability.py` and
   `tests/test_governance_gates.py`.
 - **Understand the UX:** `frontend/js/flow.js` — four steps, one dispatcher.
+- **Understand what makes a rate trustworthy:** `backend/app/services/sampleqc.py`
+  and `frontend/js/review.js` — the four checks a cohort has to pass.
