@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------- data --
+# Nothing under data/ is ever committed. This repository is public, and the
+# directory holds genotype and clinical records — uploaded VCF/PLINK filesets,
+# VariMAT exports, the DuckDB store and everything derived from them. Every
+# subdirectory is created on demand by the code, so a fresh clone regenerates
+# the lot with `python -m backend.cli synthetic`.
+data/
+
+# ------------------------------------------------------------- python --
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---------------------------------------------------------------- os --
+.DS_Store
+Thumbs.db
+
+# -------------------------------------------------------------- local --
+# Personal overrides; launch.json is shared deliberately.
+.claude/settings.local.json
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------- internal documents --
+# Source specifications and the original prototype. Kept out of a public
+# repository; they live alongside the working tree, not in it.
+Cohort-Analytics-Developer-Spec.md
+Germline-Platform-Part-II-Research-Mode.md
+Cohort-Analysis-Beginners-Guide.pdf
+ImpactOmics-Cohort-Phase1-Prototype.html
+
+# Superseded pre-rewrite UI, retained locally for reference only.
+frontend/_classic/

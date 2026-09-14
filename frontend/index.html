@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ImpactOmics · Cohort</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,400..700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="top">
+    <div class="logo">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M3 2v12M13 2v12" stroke="#4FD3DB" stroke-width="1.6" fill="none"/>
+        <path d="M3 5c4 0 6 6 10 6M3 11c4 0 6-6 10-6" stroke="#9EE3E8" stroke-width="1.3" fill="none"/>
+      </svg>
+      <b>ImpactOmics</b><span>Cohort</span>
+    </div>
+
+    <div class="modes" id="modes" role="tablist" aria-label="Data source">
+      <button role="tab" data-mode="lab" class="on" aria-selected="true">Our lab data</button>
+      <button role="tab" data-mode="research" aria-selected="false">Uploaded data</button>
+    </div>
+
+    <div class="grow"></div>
+    <button class="ghost" id="askBtn">Ask a question <kbd>⌘K</kbd></button>
+    <button class="ghost" id="helpBtn" aria-label="What is this?">?</button>
+  </header>
+
+  <!-- The spine: one job, four steps, always visible. -->
+  <nav class="steps" id="steps" aria-label="Workflow"></nav>
+
+  <div class="cohortbar" id="cohortbar"></div>
+
+  <main class="stage" id="stage" tabindex="-1">
+    <div class="loading">Loading…</div>
+  </main>
+
+</div>
+
+<div id="modalRoot"></div>
+<div class="tip" id="tip" role="tooltip"></div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script type="module" src="/static/js/flow.js"></script>
+</body>
+</html>
