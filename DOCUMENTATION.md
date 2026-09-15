@@ -33,8 +33,39 @@ there is nothing else to do to see it working.
 ```
 
 The research fixture plants six causal variants at OR 1.9, two populations with
-differing allele frequencies, 30 parent-offspring pairs and per-variant gene
-annotations — so every analysis has a known right answer to check against.
+differing allele frequencies, 30 parent-offspring pairs, 40 complete trios and
+per-variant gene annotations — so every analysis has a known right answer to
+check against.
+
+#### The demo dataset
+
+One command builds a cohort that unlocks **every implemented analysis**:
+
+```bash
+.venv/bin/python -m backend.tools.make_research_fixture \
+  --samples 3000 --variants 150000 --seed 20260915 \
+  --name "Cardiomyopathy case-control · demo cohort"
+```
+
+Stop the server first — DuckDB takes a single writer lock, so the generator
+cannot run while the app holds the database.
+
+What each part of the fixture is for:
+
+| Ingredient | Unlocks |
+|---|---|
+| 150,000 variants over 23 chromosomes | `genome_wide` density → GWAS, PRS |
+| ~45% rare (MAF 0.0004–0.0012), LoF-annotated, `lof_confidence: HC` | Burden / SKAT / SKAT-O |
+| Balanced case/control on `affected` | Association, burden, GWAS |
+| `followup_years` + `died` | Survival / penetrance |
+| Two populations at Fst 0.05, 10 PCs | Population frequency, ancestry adjustment |
+| 40 complete trios with `father_id` / `mother_id` | Segregation |
+| Gene annotations in contiguous 60-variant blocks | Gene-based tests, association by gene |
+
+Frequencies are deliberately rare-but-*observed* — 2 to 8 copies in the cohort.
+Drawing them any lower produces monomorphic sites that are present in the file
+and absent from every sample, which pass no filter and make a gene-based test
+look broken when it is behaving correctly.
 
 ### 1.1 Getting your own data in
 
@@ -169,15 +200,44 @@ the override record, so it cannot be edited off a result.
 
 | Analysis | Phase | Notes |
 |---|---|---|
-| Association (single variant) | R2 | Linear / logistic / **Firth** / robust, auto model selection |
-| GWAS | R4 | Mandatory QC, PCA, relatedness pruning, λ_GC guardrail |
+| Carrier / allele frequency | R1 | Called-sample denominator per variant; carrier model is a choice, not a default |
+| Zygosity / inheritance | R1 | Per-variant counts and a per-sample het/hom ratio |
+| Population frequency | R1 | Internal frequency by group — explicitly not a gnomAD substitute |
+| Diagnostic yield | R1 | Candidate rate, stated as an upper bound: no ACMG gate, no relevance gate |
+| Segregation / de novo | R1 | Mendelian consistency over complete trios; reports inconsistencies, never "de novo" |
+| Association (single variant) | R2 | Linear / logistic / **Firth** / robust, auto model selection; targeted by gene or variant key |
+| GWAS | R4 | Mandatory QC, PCA, relatedness pruning, λ_GC guardrail. Two-stage: score scan then exact refit |
 | Burden / SKAT / SKAT-O | R5 | Davies exact p-values, min-carrier guardrail |
 | PRS | R6 | Ancestry-stratified performance always computed |
 | Survival / penetrance | R6 | KM, log-rank, Cox (Efron), PH diagnostics, ascertainment label |
 
-Each analysis has **its own configuration form** — association asks for an
-outcome and covariates, survival asks for time and event columns, a gene-based
+Each analysis has **its own configuration form** — association asks which
+variants and an outcome, survival asks for time and event columns, a gene-based
 test asks for a qualifying-variant definition, PRS asks for score weights.
+
+The five R1 analyses were advertised by the capability matrix long before they
+existed: the cards rendered, turned green on any genotype data, and did nothing
+when clicked. `tests/test_analysis_coverage.py` now asserts the three lists —
+what the matrix can offer, what the job registry can run, and what the frontend
+has a form and a renderer for — agree in both directions.
+
+#### The GWAS scan is two-stage
+
+A scan used to fit a full GLM per variant. The covariate block is identical every
+time, so an 82,000-variant scan repeated the same expensive iteration 82,000
+times: over half an hour on 3,000 samples.
+
+It now fits the null model **once** and scores every variant against its
+residuals (`stats/scoretest.py`), then refits only the top hits — everything
+below p < 10⁻⁴ plus the top 500 — with the exact model, because an odds ratio and
+a confidence interval must come from a fitted model rather than a score
+statistic. Rows that were scanned but not refitted say so in `estimate_source`
+instead of carrying an invented effect size.
+
+Score and likelihood-ratio statistics are asymptotically equivalent under the
+null, so the ranking is unchanged; `tests/test_scoretest.py` pins that with a
+Spearman correlation against the exact fit, a KS test for uniformity of the null
+p-values, and a λ_GC check.
 
 ### Statistical guardrails
 
@@ -480,6 +540,14 @@ to use cohort size fails it with `ALDOB: hand 69 vs tool 189`.
   calls must be replaced with a dated ClinGen export, and `gene_id` with an HGNC
   export, before any figure leaves the building.
 
+**Research Mode analyses**
+- The four permanently-locked analyses — PheWAS, colocalization, fine-mapping,
+  heritability — declare a hardcoded unmet requirement, so no dataset can turn
+  them green. That is deliberate: a card that can never unlock is honest, one
+  that unlocks and then does nothing is not.
+- `association` with no gene or variant target scans the whole dataset one model
+  at a time and refuses above 5,000 variants, pointing at GWAS instead.
+
 **Ingest surface**
 - **Lab Mode has no upload UI.** VariMAT ingest is CLI-only (§1.1). The work is
   not a modal: ingest is multi-file, needs the clinical sidecar alongside it, and
@@ -546,6 +614,10 @@ Kept because each one is a trap that would recur.
 | `{...blank_criteria}` shallow copy | "Clear all" and every compiled question inherited stale filters |
 | One shared analysis config form | Three of five analyses failed the moment anyone ran them from the UI |
 | Burden error said "no annotations" when a filter had removed everything | Sent users to re-annotate when the real fix was a threshold |
+| Five analyses advertised by the capability matrix were never implemented | Cards turned green, opened no form, logged nothing — the analysis did not exist |
+| GWAS read `QCResult.keep_mask`, which does not exist | A `hasattr` fallback tried subscripting instead of failing, so a typo surfaced as "'QCResult' object is not subscriptable" |
+| GWAS fitted a full GLM per variant | Half an hour for a scan whose covariate block is identical every time |
+| `association` documented a `gene` key it never implemented | Asking for one gene silently tested every variant in the cohort |
 | Upload endpoint took a single `UploadFile` for a PLINK triple | Kept only the last part, discarded the rest, then failed with an error naming the wrong missing file |
 | `cli synthetic` deleted the whole database file | Destroyed uploaded research datasets as a side effect of rebuilding lab demo data |
 | Ti/Tv computed from the `finding` table | 597 of 606 samples "not assessable" — the reviewable subset is far too small to support a ratio |

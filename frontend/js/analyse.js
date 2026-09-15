@@ -478,12 +478,189 @@ function renderResult(payload) {
   return head2 + (body ? body(r, payload) : genericResult(r));
 }
 
+
+/* ---- the R1 descriptive results -------------------------------------------
+ * Each one leads with the sentence a reader would say out loud, then the
+ * evidence, then the caveat. A number without its denominator never appears. */
+function pct(x, dp) { return x === null || x === undefined ? '—'
+  : (Number(x) * 100).toFixed(dp === undefined ? 1 : dp) + '%'; }
+
+function carrierFreqResult(d) {
+  const top = d.rows[0];
+  return `
+    ${stat([
+      { k: 'Variants reported', v: fmt(d.n_variants_reported),
+        d: `of ${fmt(d.n_variants_scanned)} scanned` },
+      { k: 'Samples', v: fmt(d.n_samples), d: 'in the dataset' },
+      { k: 'Excluded, low call rate', v: fmt(d.skipped_low_call_rate),
+        d: `under ${d.min_calls_required} calls` },
+      { k: 'Carrier definition', v: esc(d.carrier_model), d: 'as configured' },
+    ])}
+    ${top ? `<p>The most frequent allele is <b>${esc(top.variant)}</b>${
+      top.gene ? ` in <span class="gene">${esc(top.gene)}</span>` : ''} at
+      <b>${pct(top.allele_freq, 2)}</b>, carried by ${fmt(top.carriers)} of
+      ${fmt(top.n_called)} genotyped samples.</p>` : ''}
+    ${table([
+      { label: 'Variant', cell: (r) => `<span class="mono">${esc(r.variant)}</span>` },
+      { label: 'Gene', cell: (r) => r.gene ? `<span class="gene">${esc(r.gene)}</span>` : '—' },
+      { label: 'Carriers', n: true, cell: (r) => r.suppressed
+          ? `<span class="hint" title="suppressed: fewer than 5">&lt;5</span>`
+          : fmt(r.carriers) },
+      { label: 'Called', n: true, cell: (r) => fmt(r.n_called) },
+      { label: 'Carrier rate', n: true, cell: (r) => r.suppressed ? '—'
+          : rate(r.carriers, r.n_called) },
+      { label: 'Allele freq', n: true, cell: (r) => `<span class="mono">${pct(r.allele_freq, 3)}</span>` },
+      { label: 'Het / HomAlt', cell: (r) => `<span class="mono">${fmt(r.het)} / ${fmt(r.hom_alt)}</span>` },
+      { label: 'Call rate', n: true, cell: (r) => pct(r.call_rate, 0) },
+    ], d.rows)}
+    ${d.truncated ? note(`Showing the ${d.rows.length} most frequent. Narrow the
+      frequency range to see the rest.`, 'info') : ''}
+    ${note(esc(d.method), 'info')}`;
+}
+
+function zygosityResult(d) {
+  return `
+    ${stat([
+      { k: 'Samples', v: fmt(d.n_samples), d: 'genotyped' },
+      { k: 'Variants', v: fmt(d.n_variants), d: 'in the dataset' },
+      { k: 'Median het/hom', v: d.median_het_hom_ratio === null ? '—'
+          : Number(d.median_het_hom_ratio).toFixed(2), d: 'across samples' },
+      { k: 'Sex column', v: d.sex_available ? 'present' : 'absent',
+        d: d.sex_available ? 'X calls interpretable' : 'X reads as autosomal' },
+    ])}
+    <p>A sample far from the median het/hom ratio is worth investigating before
+    its genotypes are used: high suggests contamination or sample mixture, low
+    suggests a homozygosity-rich background or a failed call set.</p>
+    <div class="cols c2">
+      <div><p class="hint" style="margin-top:0">Per sample</p>
+      ${table([
+        { label: 'Sample', cell: (r) => `<span class="mono">${esc(r.sample_id)}</span>` },
+        { label: 'Het', n: true, cell: (r) => fmt(r.het) },
+        { label: 'Hom ALT', n: true, cell: (r) => fmt(r.hom_alt) },
+        { label: 'Het/Hom', n: true, cell: (r) => r.het_hom_ratio === null ? '—'
+            : `<span class="mono">${Number(r.het_hom_ratio).toFixed(2)}</span>` },
+        { label: 'Call rate', n: true, cell: (r) => pct(r.call_rate, 0) },
+      ], d.samples)}</div>
+      <div><p class="hint" style="margin-top:0">Per variant</p>
+      ${table([
+        { label: 'Variant', cell: (r) => `<span class="mono">${esc(r.variant)}</span>` },
+        { label: 'Gene', cell: (r) => r.gene ? `<span class="gene">${esc(r.gene)}</span>` : '—' },
+        { label: 'HomRef', n: true, cell: (r) => fmt(r.hom_ref) },
+        { label: 'Het', n: true, cell: (r) => fmt(r.het) },
+        { label: 'HomAlt', n: true, cell: (r) => fmt(r.hom_alt) },
+        { label: '% carriers hom', n: true,
+          cell: (r) => pct(r.pct_carriers_homozygous, 0) },
+      ], d.variants)}</div>
+    </div>
+    ${note(esc(d.method), 'info')}`;
+}
+
+function popFreqResult(d) {
+  const groups = Object.entries(d.groups || {});
+  const labels = groups.map(([k]) => k);
+  return `
+    ${stat([
+      { k: 'Grouped by', v: esc(d.grouped_by || 'nothing'),
+        d: d.grouped_by ? `${groups.length} groups` : 'whole cohort' },
+      { k: 'Variants', v: fmt(d.n_variants_reported), d: 'with enough calls' },
+      ...groups.slice(0, 3).map(([k, v]) => ({ k: esc(k), v: fmt(v), d: 'samples' })),
+    ])}
+    ${d.grouped_by ? `<p>Sorted by the largest frequency difference between groups —
+      the variants at the top are the ones whose rarity depends on which population
+      you ask about.</p>` : ''}
+    ${table([
+      { label: 'Variant', cell: (r) => `<span class="mono">${esc(r.variant)}</span>` },
+      { label: 'Gene', cell: (r) => r.gene ? `<span class="gene">${esc(r.gene)}</span>` : '—' },
+      { label: 'Overall AF', n: true,
+        cell: (r) => `<span class="mono">${pct(r.overall_allele_freq, 3)}</span>` },
+      ...labels.map((lab) => ({
+        label: lab, n: true,
+        cell: (r) => {
+          const g = r.by_group[lab];
+          if (!g || g.allele_freq === null) return '—';
+          return `<span class="mono">${pct(g.allele_freq, 3)}</span>
+            <span class="hint">n=${fmt(g.n_called)}</span>`;
+        },
+      })),
+      { label: 'Spread', n: true, cell: (r) => r.max_group_difference === null ? '—'
+          : `<span class="mono">${pct(r.max_group_difference, 2)}</span>` },
+    ], d.rows)}
+    ${note(esc(d.method), 'warn')}`;
+}
+
+function yieldResult(d) {
+  const o = d.overall;
+  return `
+    ${stat([
+      { k: 'Subjects', v: fmt(o.subjects), d: 'with genotypes' },
+      { k: 'Carrying a qualifying variant', v: fmt(o.with_qualifying_variant),
+        d: 'at least one' },
+      { k: 'Candidate rate', v: pct(o.yield), d: 'upper bound' },
+      { k: 'Qualifying variants', v: fmt(d.n_qualifying_variants),
+        d: `AF ≤ ${pct(d.max_allele_frequency, 2)}` },
+    ])}
+    <p><b>${fmt(o.with_qualifying_variant)} of ${fmt(o.subjects)} subjects</b>
+    (${pct(o.yield)}) carry at least one variant below
+    ${pct(d.max_allele_frequency, 2)} allele frequency.</p>
+    ${d.grouped_by ? `${bars(d.groups.filter((g) => !g.suppressed).map((g) => ({
+      label: `${g.group} — ${g.with_qualifying_variant}/${g.subjects}`,
+      value: (g.yield || 0) * 100,
+      display: pct(g.yield),
+    })))}
+    ${table([
+      { label: esc(d.grouped_by), cell: (g) => esc(g.group) },
+      { label: 'Subjects', n: true, cell: (g) => fmt(g.subjects) },
+      { label: 'With a variant', n: true, cell: (g) => g.suppressed ? '&lt;5'
+          : fmt(g.with_qualifying_variant) },
+      { label: 'Rate', n: true, cell: (g) => g.suppressed ? '—'
+          : rate(g.with_qualifying_variant, g.subjects) },
+    ], d.groups)}` : ''}
+    ${note(esc(d.method), 'warn')}`;
+}
+
+function segregationResult(d) {
+  return `
+    ${stat([
+      { k: 'Complete trios', v: fmt(d.n_trios), d: 'child + both parents' },
+      { k: 'Inconsistent sites', v: fmt(d.n_findings), d: 'across all trios' },
+      { k: 'Median rate', v: d.median_inconsistency_rate === null ? '—'
+          : pct(d.median_inconsistency_rate, 3), d: 'per trio' },
+    ])}
+    <p>A trio whose rate sits well above the median is the finding here — that
+    pattern is a sample swap or a mislabelled pedigree far more often than it is
+    biology.</p>
+    ${table([
+      { label: 'Child', cell: (t) => `<span class="mono">${esc(t.child)}</span>` },
+      { label: 'Father', cell: (t) => `<span class="mono">${esc(t.father)}</span>` },
+      { label: 'Mother', cell: (t) => `<span class="mono">${esc(t.mother)}</span>` },
+      { label: 'Compared', n: true, cell: (t) => fmt(t.variants_compared) },
+      { label: 'Inconsistent', n: true, cell: (t) => fmt(t.inconsistent) },
+      { label: 'Rate', n: true, cell: (t) => t.rate === null ? '—'
+          : `<span class="mono">${pct(t.rate, 3)}</span>` },
+    ], d.trios)}
+    ${d.findings.length ? `<p class="hint" style="margin-top:16px">Individual sites</p>
+    ${table([
+      { label: 'Child', cell: (f) => `<span class="mono">${esc(f.child)}</span>` },
+      { label: 'Variant', cell: (f) => `<span class="mono">${esc(f.variant)}</span>` },
+      { label: 'Gene', cell: (f) => f.gene ? `<span class="gene">${esc(f.gene)}</span>` : '—' },
+      { label: 'Child', n: true, cell: (f) => f.child_dosage },
+      { label: 'Father', n: true, cell: (f) => f.father_dosage },
+      { label: 'Mother', n: true, cell: (f) => f.mother_dosage },
+    ], d.findings)}` : ''}
+    ${note(esc(d.method), 'warn')}`;
+}
+
 const RESULTS = {
   association: assocResult,
   gwas: assocResult,
   burden: burdenResult,
   survival: survivalResult,
   prs: prsResult,
+  carrier_frequency: carrierFreqResult,
+  zygosity: zygosityResult,
+  population_frequency: popFreqResult,
+  diagnostic_yield: yieldResult,
+  segregation: segregationResult,
 };
 
 function assocResult(r) {
@@ -774,12 +951,27 @@ async function subjectModal(state, id) {
  *
  * Each analysis now declares its own fields and builds its own spec. */
 
+/* A variant key carries colons (chrom:pos:ref:alt); a gene symbol does not.
+   That is enough to tell the two apart without asking the user which they
+   typed. */
+function parseTarget(raw) {
+  const parts = String(raw || '').split(/[\s,]+/).filter(Boolean);
+  const variants = parts.filter((x) => x.includes(':'));
+  const genes = parts.filter((x) => !x.includes(':'));
+  return { targetVariants: variants, targetGene: genes[0] || '' };
+}
+
 const FORMS = {
   association: {
-    title: 'Test each variant against an outcome',
-    fields: ['outcome', 'covariates', 'pcs', 'maf'],
+    title: 'Test specific variants against an outcome',
+    fields: ['target', 'outcome', 'covariates', 'pcs', 'maf'],
     spec: (f) => ({ outcome: f.outcome, covariates: f.covariates, n_pcs: f.n_pcs,
-                    min_maf: f.maf, genetic_model: 'additive' }),
+                    min_maf: f.maf, genetic_model: 'additive',
+                    gene: f.targetGene || null,
+                    exposure_variants: f.targetVariants.length ? f.targetVariants : null,
+                    // Fitting one model per variant across a genome-wide set is
+                    // a GWAS run the slow way; GWAS is the analysis for that.
+                    max_variants: 5000 }),
   },
   gwas: {
     title: 'Genome-wide scan',
@@ -805,6 +997,37 @@ const FORMS = {
     spec: (f) => ({ weights: f.weights, outcome: f.outcome || null,
                     score_name: f.score_name || 'custom score',
                     ancestry_column: 'ancestry' }),
+  },
+
+  /* The R1 descriptive analyses. These take little configuration — that is the
+     point of them — but they still need a form, because "run it with whatever
+     defaults" is how a carrier rate ends up quoted against the wrong
+     denominator. */
+  carrier_frequency: {
+    title: 'Carrier and allele frequency',
+    fields: ['carrier_model', 'af_window'],
+    spec: (f) => ({ carrier_model: f.carrier_model, min_af: f.af_min,
+                    max_af: f.af_max, top_n: 200 }),
+  },
+  zygosity: {
+    title: 'Zygosity and inheritance pattern',
+    fields: ['zyg_note'],
+    spec: () => ({ top_n: 200 }),
+  },
+  population_frequency: {
+    title: 'Allele frequency between groups',
+    fields: ['group_any'],
+    spec: (f) => ({ group: f.groupAny || null, top_n: 200 }),
+  },
+  diagnostic_yield: {
+    title: 'Subjects carrying a qualifying variant',
+    fields: ['group_any', 'af_ceiling'],
+    spec: (f) => ({ group: f.groupAny || null, max_af: f.afCeiling }),
+  },
+  segregation: {
+    title: 'Mendelian consistency across trios',
+    fields: ['seg_note'],
+    spec: () => ({}),
   },
 };
 
@@ -861,6 +1084,62 @@ async function configureModal(state, analysis) {
         placeholder="One per line:  1:1000:A:G  0.12"></textarea>
       <p class="hint" style="margin:6px 0 0">Variant key and weight, whitespace separated.
         Paste from a PGS Catalog file.</p></div>`,
+
+    target: `<div class="field"><label>Which variants</label>
+      <input type="text" id="cfTarget" placeholder="a gene symbol, or variant keys">
+      <p class="hint" style="margin:6px 0 0">A gene symbol (<span class="mono">GENE0042</span>)
+        tests every common variant in it. Or paste variant keys
+        (<span class="mono">1:10000:A:G</span>), comma or space separated.
+        Leave empty to scan everything — which is a GWAS run one variant at a
+        time, so prefer the <b>Genome-wide association</b> analysis for that.</p></div>`,
+
+    carrier_model: `<div class="field"><label>Who counts as a carrier</label>
+      <select id="cfModel">
+        <option value="dominant">Anyone with an ALT allele — het or hom</option>
+        <option value="het_only">Heterozygotes only — recessive carrier screening</option>
+        <option value="recessive">Homozygotes only — affected under a recessive model</option>
+      </select>
+      <p class="hint" style="margin:6px 0 0">This is a choice, not a fact. For carrier
+        screening the carrier is the heterozygote; for a dominant condition it is
+        anyone carrying the allele.</p></div>`,
+
+    af_window: `<div class="field"><label>Allele frequency range</label>
+      <div class="row2">
+        <select id="cfAfMin" style="flex:1">
+          <option value="0">no lower bound</option>
+          <option value="0.0001">0.01%</option><option value="0.001">0.1%</option>
+        </select>
+        <select id="cfAfMax" style="flex:1">
+          <option value="1">no upper bound</option>
+          <option value="0.05" selected>5% and below — rare</option>
+          <option value="0.01">1% and below</option>
+          <option value="0.001">0.1% and below — ultra-rare</option>
+        </select>
+      </div></div>`,
+
+    af_ceiling: `<div class="field"><label>A variant qualifies below</label>
+      <select id="cfAfCeil">
+        <option value="0.05">5% allele frequency</option>
+        <option value="0.01" selected>1% allele frequency</option>
+        <option value="0.001">0.1% — ultra-rare only</option>
+      </select>
+      <p class="hint" style="margin:6px 0 0">No ACMG classification is applied, so this
+        is a candidate rate and an upper bound, not a diagnostic rate.</p></div>`,
+
+    group_any: `<div class="field"><label>Split by (optional)</label>
+      <select id="cfGroupAny"><option value="">no grouping — whole cohort</option>
+        ${opts(phenos)}</select>
+      <p class="hint" style="margin:6px 0 0">Any phenotype column: ancestry, indication,
+        case/control, site.</p></div>`,
+
+    zyg_note: note(`Counts het, homozygous-ALT and call rate for every variant, and a
+      het/hom ratio per sample. No configuration needed — but note that hemizygous
+      calls on X and Y read as homozygous in the genotype encoding.`, 'info'),
+
+    seg_note: note(`Compares every complete trio and reports variants where the child
+      carries an ALT allele neither parent does. These are <b>not</b> de-novo calls:
+      at ordinary error rates most are genotyping error, and a trio far above the
+      others is usually a sample swap.`, 'info'),
   };
 
   modal(form.title, `
@@ -914,6 +1193,12 @@ async function configureModal(state, analysis) {
       test: val('cfTest', 'skat_o'),
       preset: val('cfPreset', 'ultra_rare_lof'),
       weights: parseWeights(val('cfWeights', '')),
+      carrier_model: val('cfModel', 'dominant'),
+      af_min: parseFloat(val('cfAfMin', '0')),
+      af_max: parseFloat(val('cfAfMax', '1')),
+      afCeiling: parseFloat(val('cfAfCeil', '0.01')),
+      groupAny: val('cfGroupAny', ''),
+      ...parseTarget(val('cfTarget', '')),
     };
     if (analysis === 'prs' && !Object.keys(fields.weights).length) {
       out.innerHTML = note('Paste at least one variant and weight.', 'bad');

@@ -66,6 +66,35 @@ def registered() -> List[str]:
     return sorted(_REGISTRY)
 
 
+# Statuses a job can still move out of. Anything here is owned by a live thread.
+ACTIVE_STATUSES = (STATUS_QUEUED, STATUS_VALIDATING, STATUS_RUNNING, STATUS_POST)
+
+
+def reconcile_interrupted() -> int:
+    """Fail any job still marked active at startup.
+
+    Job state lives in the database but the thread running it does not. If the
+    process dies mid-job — a crash, a restart, a laptop lid — the row stays
+    "running" forever with nothing left to advance it, and the UI polls a job
+    that will never finish. Nothing else notices, because from the outside a
+    hung job and a slow one look identical.
+
+    Startup is the one moment we can be certain no job is genuinely in flight,
+    so it is the only safe place to make this call.
+    """
+    stale = db.rows(
+        "SELECT job_id, analysis FROM analysis_job WHERE status IN ({})".format(
+            ",".join("?" * len(ACTIVE_STATUSES))), list(ACTIVE_STATUSES))
+    for row in stale:
+        db.execute(
+            "UPDATE analysis_job SET status = ?, finished_at = ?, "
+            "error = ? WHERE job_id = ?",
+            [STATUS_FAILED, datetime.utcnow(),
+             "Interrupted: the server stopped while this job was running. "
+             "Nothing was written; submit it again.", row["job_id"]])
+    return len(stale)
+
+
 # ------------------------------------------------------------ reproducibility
 def reproducibility_record(spec: Dict[str, Any], dataset: Dict[str, Any],
                            seed: Optional[int]) -> Dict[str, Any]:

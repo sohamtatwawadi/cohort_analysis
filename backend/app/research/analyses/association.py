@@ -334,15 +334,54 @@ def association_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, 
 
     genetic_model = spec.get("genetic_model", "additive")
     targets = spec.get("exposure_variants")
+    gene = (spec.get("gene") or "").strip()
     variant_index = {v.key: i for i, v in enumerate(gm.variants)}
+    maf = gm.maf()
+    min_maf = float(spec.get("min_maf", 0.01))
+
     if targets:
         idx = [variant_index[k] for k in targets if k in variant_index]
+        if not idx:
+            raise ValueError(
+                "None of the {} variant key(s) given are in this dataset. Keys "
+                "look like chrom:pos:ref:alt, e.g. {}."
+                .format(len(targets), gm.variants[0].key if gm.variants else "1:100:A:G"))
+    elif gene:
+        # Documented in this docstring since the first version but never
+        # implemented: the job silently fell through to a whole-dataset scan,
+        # so asking for one gene tested every variant in the cohort.
+        annotations = research_store.load_annotations(dataset_id) or {}
+        want = gene.upper()
+        idx = [i for i, v in enumerate(gm.variants)
+               if str((annotations.get(v.key) or {}).get("gene", "")).upper() == want]
+        if not idx:
+            known = sorted({str((a or {}).get("gene")) for a in annotations.values()
+                            if a and a.get("gene")})
+            raise ValueError(
+                "No variants annotated to gene '{}'. {}".format(
+                    gene,
+                    "This dataset has no gene annotations at all — attach them "
+                    "to test by gene." if not known else
+                    "Known genes include: {}.".format(", ".join(known[:8]))))
+        idx = [i for i in idx if np.isfinite(maf[i]) and maf[i] >= min_maf]
+        if not idx:
+            raise ValueError(
+                "Gene '{}' has variants, but none above the {:.3g} minimum allele "
+                "frequency. Single-variant association has no power on rarer "
+                "variants — use a gene-based burden test instead."
+                .format(gene, min_maf))
     else:
         # Whole-dataset scan, MAF-filtered so the test set is defensible.
-        maf = gm.maf()
-        min_maf = float(spec.get("min_maf", 0.01))
         idx = [i for i in range(gm.n_variants)
                if np.isfinite(maf[i]) and maf[i] >= min_maf]
+        max_scan = int(spec.get("max_variants") or 0)
+        if max_scan and len(idx) > max_scan:
+            raise ValueError(
+                "An untargeted scan would fit {} separate models, which is a "
+                "genome-wide scan run one variant at a time. Name a gene or "
+                "specific variants here, or use the GWAS analysis, which is "
+                "built for this and prunes relatedness first."
+                .format(len(idx)))
 
     if not idx:
         raise ValueError("No variants matched the exposure specification.")

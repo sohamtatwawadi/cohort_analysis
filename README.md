@@ -152,8 +152,9 @@ governance, audit and export are shared; mode changes what data flows in and
 which analyses unlock.
 
 **Scope built:** R1 (ingestion, profiling, capability gating, registry, project
-isolation), R2 (association), R4 (GWAS), R5 (burden/SKAT/SKAT-O), R6 (PRS,
-survival, penetrance). **Not built:** R3 (PheWAS — needs an ICD→PheCode
+isolation, and the five descriptive analyses — carrier frequency, zygosity,
+population frequency, diagnostic yield, segregation), R2 (association), R4
+(GWAS), R5 (burden/SKAT/SKAT-O), R6 (PRS, survival, penetrance). **Not built:** R3 (PheWAS — needs an ICD→PheCode
 ontology), R7 (fine-mapping, colocalization, heritability — need LD reference
 panels and summary statistics), R8.
 
@@ -167,8 +168,9 @@ backend/app/research/
   registry.py     §8 dataset registry, project isolation, deletion
   jobs.py         §6 job queue, lifecycle, reproducibility record
   variantset.py   §4.4 qualifying-variant builder, versioned
-  stats/          glm (incl. Firth), pca, kinship, qc, skat, survival, power
-  analyses/       association, gwas, burden, prs, survival
+  stats/          glm (incl. Firth), pca, kinship, qc, skat, survival, power,
+                  scoretest (the vectorised GWAS scan)
+  analyses/       association, gwas, burden, prs, survival, descriptive
 ```
 
 ## Try it
@@ -179,8 +181,9 @@ backend/app/research/
 ```
 
 Then switch to Research in the rail. The fixture plants six causal variants at
-OR 1.9, two populations with differing allele frequencies, and 30
-parent-offspring pairs, so the analyses have a known right answer. The
+OR 1.9, two populations with differing allele frequencies, 30 parent-offspring
+pairs, 40 complete trios and a rare-variant burden signal in three genes, so the
+analyses have a known right answer. The
 association scan recovers five of the six planted variants as its top five hits,
 and the kinship engine recovers exactly the 30 planted pairs (max κ = 0.252
 against a theoretical 0.25).

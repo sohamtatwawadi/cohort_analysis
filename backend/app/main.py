@@ -13,6 +13,7 @@ from . import config, db
 from .api.research_routes import router as research_router
 from .api.routes import router
 from .ingest import store, synthetic
+from .research import jobs as research_jobs
 from .services import library
 
 log = logging.getLogger("germline")
@@ -39,6 +40,14 @@ def startup() -> None:
                     "Run `python -m backend.cli ingest <dir>` to load VariMAT files.")
         synthetic.rebuild()
     library.seed_builtins()
+
+    # Job state is in the database; the thread advancing it is not. A job that
+    # was running when the process stopped has nobody left to finish it, and is
+    # polled forever from the UI. Startup is the one moment nothing can be
+    # genuinely in flight, so it is where that gets reconciled.
+    interrupted = research_jobs.reconcile_interrupted()
+    if interrupted:
+        log.warning("Marked %d interrupted analysis job(s) as failed.", interrupted)
 
 
 @app.get("/health")

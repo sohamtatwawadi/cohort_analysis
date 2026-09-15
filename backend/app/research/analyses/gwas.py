@@ -139,6 +139,7 @@ def gwas_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     from .. import store as research_store
     from ..stats import kinship as kin_mod
     from ..stats import qc as qc_mod
+    from ..stats import scoretest
 
     log = context.get("log", lambda m: None)
     dataset_id = context["dataset_id"]
@@ -169,10 +170,12 @@ def gwas_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     sqc = qc_mod.sample_qc(
         gm, min_call_rate=float(spec.get("min_sample_call_rate", 0.95)))
 
-    keep_variants = np.asarray(vqc.keep_mask if hasattr(vqc, "keep_mask")
-                               else vqc["keep_mask"])
-    keep_samples = np.asarray(sqc.keep_mask if hasattr(sqc, "keep_mask")
-                              else sqc["keep_mask"])
+    # QCResult.keep — not `keep_mask`. The previous getattr/subscript fallback
+    # here tried a second wrong spelling instead of failing on the first, so a
+    # plain typo surfaced as "'QCResult' object is not subscriptable" from a
+    # line that looked defensive.
+    keep_variants = np.asarray(vqc.keep, dtype=bool)
+    keep_samples = np.asarray(sqc.keep, dtype=bool)
     qc_gm = gm.subset_variants(keep_variants)
     qc_gm = qc_gm.subset_samples([s for s, k in zip(gm.sample_ids, keep_samples) if k])
     log("QC kept {} variants and {} samples".format(qc_gm.n_variants, qc_gm.n_samples))
@@ -201,7 +204,21 @@ def gwas_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
 
     if n_pcs:
         from ..stats import pca as pca_mod
-        pca = pca_mod.compute_pca(qc_gm, n_components=min(n_pcs, max(2, qc_gm.n_samples - 1)))
+        # Ancestry PCs come from a marker subset, not the whole scan set. The
+        # SVD is exact and in-memory, so its cost grows with the variant count
+        # while the ancestry signal does not — the leading PCs are common-variant
+        # structure and are stable well below 20,000 markers. Running it over
+        # every QC-passing variant was the slowest step in the whole job.
+        max_pca_variants = int(spec.get("max_pca_variants") or 20000)
+        pca_gm = qc_gm
+        if qc_gm.n_variants > max_pca_variants:
+            step = qc_gm.n_variants // max_pca_variants
+            mask = np.zeros(qc_gm.n_variants, dtype=bool)
+            mask[::step] = True                    # evenly spread along the genome
+            pca_gm = qc_gm.subset_variants(mask)
+            log("PCA on {} of {} variants".format(pca_gm.n_variants, qc_gm.n_variants))
+        pca = pca_mod.compute_pca(pca_gm,
+                                  n_components=min(n_pcs, max(2, pca_gm.n_samples - 1)))
         for k in range(min(n_pcs, pca.components.shape[1])):
             covariates["PC{}".format(k + 1)] = pca.components[:, k]
         log("computed {} ancestry PCs".format(len(covariates)))
@@ -214,23 +231,69 @@ def gwas_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
     genetic_model = spec.get("genetic_model", "additive")
 
     # ---- the scan ----------------------------------------------------------
+    # Two stages, which is what a GWAS is. The scan fits the covariate model
+    # ONCE and scores every variant against its residuals; the exact GLM is then
+    # refitted only for the variants worth reporting an effect size for.
+    #
+    # Fitting a full model per variant instead — which this did — means redoing
+    # the identical covariate iteration eighty thousand times. On this dataset
+    # that was over half an hour, versus seconds now, for the same ranking.
     log("scanning {} variants".format(qc_gm.n_variants))
     maf = qc_gm.maf()
-    results: List[Dict[str, Any]] = []
-    for i in range(qc_gm.n_variants):
+
+    cov_matrix = (np.column_stack([covariates[c] for c in sorted(covariates)])
+                  if covariates else None)
+    scan = scoretest.score_scan(qc_gm.dosages, y, cov_matrix,
+                                kind="binary" if kind == "binary" else "quantitative")
+    scan_p = scan["p"]
+    usable = scan["usable"]
+    log("scored {} of {} variants".format(int(usable.sum()), qc_gm.n_variants))
+
+    if not usable.any():
+        raise ValueError(
+            "No variant had estimable score variance after QC — every remaining "
+            "variant is monomorphic or collinear with a covariate.")
+
+    # Refit exactly: everything suggestive, and at minimum the top of the list
+    # so a result is never empty.
+    n_refit = int(spec.get("n_exact_refit") or 500)
+    order = np.argsort(np.where(np.isfinite(scan_p), scan_p, np.inf))
+    suggestive = set(np.flatnonzero(np.isfinite(scan_p) & (scan_p < 1e-4)).tolist())
+    refit_idx = sorted(suggestive | set(order[:n_refit].tolist()))
+    log("refitting {} variant(s) with the exact model".format(len(refit_idx)))
+
+    exact_by_index: Dict[int, Dict[str, Any]] = {}
+    for n_done, i in enumerate(refit_idx):
         exposure = encode_genotype(qc_gm.dosages[i, :], genetic_model)
         res = run_association(y, exposure, kind, covariates=covariates,
                               model=spec.get("model"),
                               term_label=qc_gm.variants[i].key)
-        if res.get("status") != "ok":
+        if res.get("status") == "ok":
+            exact_by_index[i] = res
+        if n_done and n_done % 200 == 0:
+            log("refit {}/{}".format(n_done, len(refit_idx)))
+
+    results: List[Dict[str, Any]] = []
+    for i in range(qc_gm.n_variants):
+        if not usable[i]:
             continue
+        res = dict(exact_by_index.get(i) or {})
+        if res:
+            res["estimate_source"] = "exact model refit"
+        else:
+            # Scanned but not refitted: report the score p-value and say so,
+            # rather than inventing an effect size the scan never estimated.
+            res = {"pvalue": float(scan_p[i]), "status": "ok",
+                   "beta": None, "se": None, "ci_low": None, "ci_high": None,
+                   "effect": None, "effect_label": None,
+                   "model": "score test",
+                   "estimate_source": "score test only — not refitted"}
         res["variant"] = qc_gm.variants[i].key
         res["chrom"] = qc_gm.variants[i].chrom
         res["pos"] = qc_gm.variants[i].pos
         res["maf"] = float(maf[i]) if np.isfinite(maf[i]) else None
+        res["score_pvalue"] = float(scan_p[i])
         results.append(res)
-        if i and i % 2000 == 0:
-            log("{}/{} variants".format(i, qc_gm.n_variants))
 
     if not results:
         raise ValueError("No variant produced an estimable model after QC.")
