@@ -11,6 +11,10 @@
 
 import { api } from './api.js';
 import {
+  dotplot, dumbbell, histogram, kaplanMeier, manhattan, mountCharts, qq,
+  scatter, volcano,
+} from './charts.js';
+import {
   acmg, bars, card, closeModal, crumb, empty, esc, f1, fmt, head, heatmap, kv,
   modal, note, rate, stacked, stat, table, tag, toast, ZYG_TONE,
 } from './kit.js';
@@ -509,6 +513,33 @@ const CARRIER_LABELS = {
   recessive: 'homozygotes',
 };
 
+/* The frequency spectrum is the shape of the data: rare variants dominate any
+   real call set, and seeing that is worth more than reading the top of a table. */
+function afSpectrum(rows) {
+  if (!rows || rows.length < 8) return '';
+  const vals = rows.map((r) => r.allele_freq).filter((v) => isFinite(v));
+  if (!vals.length) return '';
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  if (!(hi > lo)) return '';
+  const n = 24;
+  const step = (hi - lo) / n;
+  const bins = Array.from({ length: n }, (_, i) => ({
+    lo: lo + i * step, hi: lo + (i + 1) * step, count: 0,
+  }));
+  for (const v of vals) {
+    bins[Math.min(n - 1, Math.floor((v - lo) / step))].count += 1;
+  }
+  return histogram(bins, {
+    title: 'Allele frequency spectrum',
+    sub: `${fmt(vals.length)} variants shown`,
+    xLabel: 'alternate allele frequency',
+    yLabel: 'variants',
+    foot: 'The shape of the reported set, not of the whole dataset — the frequency '
+      + 'filter you chose decides which part of the spectrum appears here.',
+  });
+}
+
 function carrierFreqResult(d) {
   const top = d.rows[0];
   return `
@@ -521,6 +552,7 @@ function carrierFreqResult(d) {
       { k: 'Carrier definition', v: esc(CARRIER_LABELS[d.carrier_model] || d.carrier_model),
         d: 'as configured' },
     ])}
+    ${afSpectrum(d.rows)}
     ${top ? `<p>The most frequent allele is <b>${esc(top.variant)}</b>${
       top.gene ? ` in <span class="gene">${esc(top.gene)}</span>` : ''} at
       <b>${pct(top.allele_freq, 2)}</b>, carried by ${fmt(top.carriers)} of
@@ -543,6 +575,30 @@ function carrierFreqResult(d) {
     ${note(esc(d.method), 'info')}`;
 }
 
+/* Heterozygous against homozygous count, per sample. A contaminated sample sits
+   visibly off the cloud in a way no column of numbers conveys — which is the
+   entire argument for plotting it. */
+function zygScatter(d) {
+  const ss = (d.samples || []).filter((s) => isFinite(s.het) && isFinite(s.hom_alt));
+  if (ss.length < 5) return '';
+  const med = d.median_het_hom_ratio;
+  return scatter(ss.map((s) => ({
+    x: s.hom_alt, y: s.het,
+    flag: med && s.het_hom_ratio && (s.het_hom_ratio > med * 1.5
+                                     || s.het_hom_ratio < med * 0.6),
+    label: `${s.sample_id} · het ${fmt(s.het)} · hom ${fmt(s.hom_alt)}`
+      + (s.het_hom_ratio ? ` · ratio ${Number(s.het_hom_ratio).toFixed(2)}` : ''),
+  })), {
+    title: 'Heterozygous against homozygous calls',
+    sub: med ? `cohort median ratio ${Number(med).toFixed(2)}` : '',
+    xLabel: 'homozygous ALT', yLabel: 'heterozygous',
+    flagLabel: 'far from the cohort ratio',
+    baseLabel: 'consistent with the cohort',
+    foot: 'Samples sit on a line whose slope is the het/hom ratio. One sitting off '
+      + 'that line is the finding.',
+  });
+}
+
 function zygosityResult(d) {
   return `
     ${stat([
@@ -556,6 +612,7 @@ function zygosityResult(d) {
     <p>A sample far from the median het/hom ratio is worth investigating before
     its genotypes are used: high suggests contamination or sample mixture, low
     suggests a homozygosity-rich background or a failed call set.</p>
+    ${zygScatter(d)}
     <div class="cols c2">
       <div><p class="hint" style="margin-top:0">Per sample</p>
       ${table([
@@ -580,6 +637,34 @@ function zygosityResult(d) {
     ${note(esc(d.method), 'info')}`;
 }
 
+/* Before-and-after per item is a dumbbell: one hue in two shades, joined. Two
+   hues would spend the identity channel on what position already shows. */
+function groupDumbbell(d) {
+  const labels = Object.keys(d.groups || {});
+  if (labels.length !== 2) return '';          // a dumbbell compares exactly two
+  const [a, b] = labels;
+  const rows = (d.rows || [])
+    .filter((r) => r.by_group && r.by_group[a] && r.by_group[b]
+                   && isFinite(r.by_group[a].allele_freq)
+                   && isFinite(r.by_group[b].allele_freq))
+    .slice(0, 12);
+  if (rows.length < 3) return '';
+  return dumbbell(rows.map((r) => ({
+    label: r.gene ? `${r.gene}` : r.variant,
+    a: r.by_group[a].allele_freq, b: r.by_group[b].allele_freq,
+    aLabel: a, bLabel: b,
+    note: r.max_group_difference !== null && r.max_group_difference !== undefined
+      ? `Δ ${(r.max_group_difference * 100).toFixed(2)}pp` : '',
+  })), {
+    title: 'Where the groups disagree most',
+    sub: `top ${rows.length} by frequency difference`,
+    fmt: (v) => (v * 100).toFixed(1) + '%',
+    foot: 'These are internal frequencies in this cohort, not population reference '
+      + 'values. A referral-selected cohort is enriched for exactly the alleles it '
+      + 'was selected on.',
+  });
+}
+
 function popFreqResult(d) {
   const groups = Object.entries(d.groups || {});
   const labels = groups.map(([k]) => k);
@@ -590,6 +675,7 @@ function popFreqResult(d) {
       { k: 'Variants', v: fmt(d.n_variants_reported), d: 'with enough calls' },
       ...groups.slice(0, 3).map(([k, v]) => ({ k: esc(k), v: fmt(v), d: 'samples' })),
     ])}
+    ${groupDumbbell(d)}
     ${d.grouped_by ? `<p>Sorted by the largest frequency difference between groups —
       the variants at the top are the ones whose rarity depends on which population
       you ask about.</p>` : ''}
@@ -643,6 +729,30 @@ function yieldResult(d) {
     ${note(esc(d.method), 'warn')}`;
 }
 
+/* One dot per trio against the cohort median. The question this answers is
+   "does one trio behave unlike the others", which is a shape question. */
+function trioPlot(d) {
+  const ts = (d.trios || []).filter((t) => isFinite(t.rate));
+  if (ts.length < 3) return '';
+  const med = d.median_inconsistency_rate;
+  return dotplot(ts.map((t) => ({
+    value: t.rate,
+    flag: med && t.rate > med * 3,
+    label: `${t.child} · ${fmt(t.inconsistent)} of ${fmt(t.variants_compared)} `
+      + `(${(t.rate * 100).toFixed(3)}%)`,
+  })), {
+    title: 'Mendelian inconsistency by trio',
+    sub: `${fmt(ts.length)} complete trios`,
+    yLabel: 'inconsistent share',
+    xLabel: 'one dot per trio',
+    fmtY: (v) => (v * 100).toFixed(2) + '%',
+    reference: med,
+    referenceLabel: 'cohort median',
+    foot: 'A trio well above the median is usually a sample swap or a mislabelled '
+      + 'pedigree, not a mutator phenotype.',
+  });
+}
+
 function segregationResult(d) {
   return `
     ${stat([
@@ -654,6 +764,7 @@ function segregationResult(d) {
     <p>A trio whose rate sits well above the median is the finding here — that
     pattern is a sample swap or a mislabelled pedigree far more often than it is
     biology.</p>
+    ${trioPlot(d)}
     ${table([
       { label: 'Child', cell: (t) => `<span class="mono">${esc(t.child)}</span>` },
       { label: 'Father', cell: (t) => `<span class="mono">${esc(t.father)}</span>` },
@@ -692,7 +803,40 @@ function assocResult(r) {
   const rows = r.results || r.top_hits || [];
   const infl = r.inflation_guardrail;
   const hits = rows.filter((x) => (x.p_bonferroni ?? 1) < 0.05).length;
-  return (infl && infl.status !== 'ok'
+
+  /* A genome-wide scan gets the Manhattan it was computed for, paired with the
+     Q–Q that says whether the scan can be believed at all. The pair belongs
+     together: a tall peak means nothing if the whole distribution is lifted. */
+  const lam = (r.inflation || {}).lambda_gc;
+  const charts = (r.manhattan && r.manhattan.length)
+    ? `<div class="chart-grid c-manhattan">
+        ${manhattan(r.manhattan, {
+          sub: `${fmt(r.n_variants_tested)} variants · ${fmt(r.n_samples)} samples`,
+          foot: 'Each point is one variant, ordered along the genome. Points above '
+            + 'the dashed red line cleared genome-wide significance. Hover any point '
+            + 'for its identity and p-value.',
+        })}
+        ${qq((r.qq || {}).observed || [], (r.qq || {}).expected || [], {
+          sub: lam ? `λ_GC = ${Number(lam).toFixed(3)}` : '',
+          foot: 'Points should follow the diagonal until the real associations '
+            + 'lift off at the top. A curve that departs early is inflation, not '
+            + 'discovery.',
+        })}
+      </div>`
+    : volcano(rows.map((x) => ({
+        x: x.beta, y: -Math.log10(Math.max(x.pvalue || 1, 1e-300)),
+        name: x.variant, label: `${x.variant} · p = ${(x.pvalue ?? 1).toExponential(2)}`
+          + (x.effect ? ` · ${x.effect_label || 'effect'} ${Number(x.effect).toFixed(2)}` : ''),
+      })), {
+        title: 'Effect against significance',
+        sub: `${fmt(rows.length)} variants tested`,
+        xLabel: 'log odds (β)',
+        threshold: -Math.log10(r.alpha && r.alpha.alpha ? r.alpha.alpha : 0.05),
+        foot: 'Points above the dashed line cleared the significance threshold for '
+          + 'this many tests. Distance from the centre line is effect size.',
+      });
+
+  return charts + (infl && infl.status !== 'ok'
       ? note(`<b>Possible population stratification.</b> ${esc(infl.text)}`,
              infl.status === 'severe' ? 'bad' : 'warn') : '')
     + (r.power ? powerNote(r.power) : '')
@@ -715,7 +859,26 @@ function assocResult(r) {
 
 function burdenResult(r) {
   const sig = (r.results || []).filter((x) => (x.p_fdr_bh ?? 1) < 0.05).length;
-  return headline(fmt(sig), `gene${sig === 1 ? '' : 's'} significant at 5% FDR, of `
+  const gv = (r.results || []).filter((x) => x.p !== null && x.p !== undefined);
+  return volcano(gv.map((x) => ({
+      // Burden collapses a gene to one direction, so the x-axis is the excess of
+      // carriers in cases — the quantity the test is actually about.
+      x: (x.n_carriers_cases || 0) - (x.n_carriers_controls || 0),
+      y: -Math.log10(Math.max(x.p, 1e-300)),
+      name: x.gene,
+      label: `${x.gene} · ${fmt(x.n_carriers)} carriers `
+        + `(${fmt(x.n_carriers_cases)} case / ${fmt(x.n_carriers_controls)} control) `
+        + `· p = ${x.p.toExponential(2)}`,
+    })), {
+      title: 'Genes by carrier excess and significance',
+      sub: `${fmt(r.n_genes_tested)} genes · ${fmt(r.n_qualifying_variants)} qualifying variants`,
+      xLabel: 'carriers in cases − controls',
+      threshold: gv.length ? -Math.log10(0.05 / gv.length) : undefined,
+      foot: 'Right of centre means the gene carries more variant carriers among '
+        + 'cases. Height is significance; the dashed line is the Bonferroni '
+        + 'threshold for the number of genes tested.',
+    })
+    + headline(fmt(sig), `gene${sig === 1 ? '' : 's'} significant at 5% FDR, of `
       + `${fmt(r.n_genes_tested)} tested`)
     + note(esc(r.guardrail_note), 'info')
     + card('Genes', table([
@@ -740,6 +903,13 @@ function burdenResult(r) {
    thousands of float literals, which is not a result. The numbers a reader
    actually needs are the medians, the log-rank p, the hazard ratios and
    whether the proportional-hazards assumption held. */
+/* Axis labels are read by people; a raw column name like followup_years is a
+   database identifier that happened to leak onto the page. */
+function humanCol(name) {
+  if (!name) return '';
+  return String(name).replace(/[_-]+/g, ' ').trim();
+}
+
 function survivalResult(r) {
   const km = r.kaplan_meier || {};
   const groups = km.groups || {};
@@ -764,7 +934,16 @@ function survivalResult(r) {
     phP: ((ph.covariates || {})[name] || {}).p,
   }));
 
-  return (pen.ascertained
+  return kaplanMeier(groups, {
+      title: names.length > 1 ? 'Survival by group' : 'Survival',
+      sub: lr && lr.p !== undefined && lr.p !== null
+        ? `log-rank p = ${Number(lr.p).toExponential(2)}` : '',
+      xLabel: humanCol(r.time_column) || 'time',
+      foot: 'Each drop is an event. The curve is drawn as a step because survival '
+        + 'changes only when an event occurs — a smooth line would imply deaths '
+        + 'between events that did not happen.',
+    })
+    + (pen.ascertained
       ? note(`<b>${esc(pen.stamp)}</b><br>${esc(pen.caveat)}`, 'warn')
       : note(esc(pen.caveat), 'info'))
     + headline(fmt(r.n_events), `events among ${fmt(r.n)} subjects followed`)
@@ -818,7 +997,14 @@ function prsResult(r) {
   const cal = r.calibration || {};
   const strat = r.ancestry_stratified || {};
   const d = r.distribution || {};
-  return note(esc(r.coverage_note), 'info')
+  return histogram(d.histogram || [], {
+      title: 'Score distribution',
+      sub: `mean ${Number(d.mean).toFixed(3)} · SD ${Number(d.sd).toFixed(3)}`,
+      xLabel: 'polygenic score',
+      foot: 'A polygenic score is only interpretable against the distribution it '
+        + 'sits in — an absolute value carries no meaning on its own.',
+    })
+    + note(esc(r.coverage_note), 'info')
     + headline(fmt(r.n_variants_used), `of ${fmt(r.n_variants_requested)} score variants `
         + `found in this dataset`)
     + card('Score distribution', kv([

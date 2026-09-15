@@ -9,6 +9,7 @@
  * Every screen answers: where am I, what do I do here, what is next. */
 
 import { api } from './api.js';
+import { mountCharts } from './charts.js';
 import { closeModal, esc, fmt, modal, note, toast } from './kit.js';
 import * as build from './build.js';
 import * as review from './review.js';
@@ -61,6 +62,9 @@ export const ctx = { render, resolveCohort, blankCriteria, go, state };
 /* --------------------------------------------------------------------- boot */
 async function boot() {
   bindChrome();
+  // One delegated hover listener serves every chart on the page, now and after
+  // every re-render. A Manhattan plot alone has tens of thousands of marks.
+  mountCharts(document);
   state.meta = await api.meta();
   state.criteria = blankCriteria();
   state.presets = (await api.cohorts()).cohorts;

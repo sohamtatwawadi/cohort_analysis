@@ -13,12 +13,18 @@
 <div id="app">
 
   <header class="top">
+    <!-- Wordmark. The "o" is the brand glyph: a ring with two nodes on a bond
+         through it. Set as text plus one inline SVG rather than an image file so
+         it stays crisp at any density and inherits the header's own colour. -->
     <div class="logo">
-      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-        <path d="M3 2v12M13 2v12" stroke="#4FD3DB" stroke-width="1.6" fill="none"/>
-        <path d="M3 5c4 0 6 6 10 6M3 11c4 0 6-6 10-6" stroke="#9EE3E8" stroke-width="1.3" fill="none"/>
-      </svg>
-      <b>ImpactOmics</b><span>Cohort</span>
+      <span class="wm" aria-label="Impactomics">Impact<svg class="wm-o" viewBox="0 0 24 24"
+          role="img" aria-hidden="true" focusable="false">
+          <circle class="ring" cx="12" cy="12" r="6.4"/>
+          <line x1="9.4" y1="14.6" x2="14.6" y2="9.4"/>
+          <circle class="node" cx="15.4" cy="8.6" r="2.3"/>
+          <circle class="node" cx="8.7" cy="15.3" r="1.6"/>
+        </svg>mics</span>
+      <span class="sub">Cohort</span>
     </div>
 
     <div class="modes" id="modes" role="tablist" aria-label="Data source">

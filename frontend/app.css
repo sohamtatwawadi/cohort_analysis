@@ -18,6 +18,8 @@
   --good:#1F6B45; --good-bg:#EDF6F1; --good-line:#B4D9C4;
   --warn:#8A5A00; --warn-bg:#FCF5E6; --warn-line:#E8D5AA;
   --bad:#A32B22; --bad-bg:#FCEFEE; --bad-line:#E7BDB8;
+  /* Brand. The navy is the wordmark's ground, the aqua its glyph. */
+  --brand-navy:#1B3A5C; --brand-glyph:#5CC8C8;
   --r:6px; --r-sm:4px;
   --sp:8px;
   --shadow:0 1px 2px rgba(16,24,32,.05), 0 4px 14px rgba(16,24,32,.05);
@@ -40,11 +42,24 @@ h1,h2,h3,h4{margin:0;font-weight:650;letter-spacing:-.012em}
 #app{height:100%;display:grid;grid-template-rows:52px auto auto 1fr;overflow:hidden}
 
 /* ------------------------------------------------------------------- top -- */
-.top{background:var(--ink);color:#E9EEF3;display:flex;align-items:center;gap:14px;
+.top{background:var(--brand-navy);color:#E9EEF3;display:flex;align-items:center;gap:14px;
   padding:0 18px}
-.logo{display:flex;align-items:center;gap:8px}
-.logo b{font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;font-weight:700}
-.logo span{font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;color:#7F8C99}
+.logo{display:flex;align-items:baseline;gap:9px}
+
+/* The wordmark keeps its own casing and tight tracking — it is a name, not a
+   label, so it does not take the uppercase treatment the rest of the chrome
+   uses. The glyph sits on the text baseline and scales with the font size, so
+   the two never drift apart. */
+.wm{display:inline-flex;align-items:center;font-size:18.5px;font-weight:400;
+  letter-spacing:-.015em;color:#fff;line-height:1}
+/* The nodes carry the glyph; the bond is a hint between them. Drawn across the
+   full ring at full weight it reads as a "no entry" slash instead. */
+.wm-o{width:.78em;height:.78em;margin:0 -.035em;transform:translateY(.05em);overflow:visible}
+.wm-o .ring{fill:none;stroke:var(--brand-glyph);stroke-width:1.9}
+.wm-o .node{fill:var(--brand-glyph);stroke:var(--brand-navy);stroke-width:1.1}
+.wm-o line{stroke:var(--brand-glyph);stroke-width:1.2;stroke-linecap:round;opacity:.55}
+.logo .sub{font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;
+  color:#7F8C99;font-weight:600}
 .top .grow{flex:1}
 .modes{display:flex;background:#0B0F14;border-radius:var(--r);padding:3px;margin-left:10px}
 .modes button{background:none;border:0;color:#93A1AF;padding:5px 13px;border-radius:var(--r-sm);
@@ -329,3 +344,57 @@ svg.chart{display:block;max-width:100%}
 .asklist button{width:100%;text-align:left;background:none;border:1px solid transparent;
   padding:10px 12px;cursor:pointer;border-radius:var(--r-sm);font-size:13.5px}
 .asklist button:hover{background:var(--accent-soft);border-color:var(--accent-line)}
+
+/* ---------------------------------------------------------------- charts -- */
+/* One stylesheet for every chart so they read as a system. Grid and axes are
+   deliberately recessive: the data is the only thing allowed to be loud. */
+.chart-fig{margin:0 0 18px;padding:0}
+.chart-fig figcaption{font-size:12.5px;font-weight:650;color:#42505E;
+  letter-spacing:.02em;margin-bottom:8px;display:flex;gap:10px;align-items:baseline}
+.chart-fig figcaption span{font-weight:400;color:var(--muted2);letter-spacing:0;
+  font-size:12px}
+.chart-scroll{position:relative;overflow-x:auto;overflow-y:hidden}
+svg.chart{display:block;width:100%;height:auto;min-width:300px}
+/* Side by side once there is room; the Manhattan takes the wider column because
+   genomic position needs the horizontal space and the Q-Q is square. */
+.chart-grid{display:grid;gap:18px;grid-template-columns:1fr;align-items:start}
+
+svg.chart .grid line{stroke:var(--rule);stroke-width:1}
+svg.chart .axis line{stroke:var(--rule);stroke-width:1}
+svg.chart .axis text{fill:var(--muted);font-size:10.5px;
+  font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+svg.chart .axis text.ttl{fill:var(--muted2);font-size:10.5px;
+  font-family:'Archivo',sans-serif;letter-spacing:.04em;text-transform:uppercase}
+svg.chart .row-lbl{fill:var(--text);font-size:11px}
+svg.chart .row-val{fill:var(--muted);font-size:11px;
+  font-family:'IBM Plex Mono',monospace}
+svg.chart .pt-lbl{fill:var(--text);font-size:10.5px;font-weight:600;paint-order:stroke;
+  stroke:var(--panel);stroke-width:3px}
+
+/* Reference lines are guides, not data — hairline and quiet, but dashed so they
+   never read as a measured series. */
+svg.chart .thresh{stroke-width:1.2;fill:none}
+svg.chart .thresh.gw{stroke:var(--bad);stroke-dasharray:5 3;opacity:.75}
+svg.chart .thresh.sug{stroke:var(--muted2);stroke-dasharray:3 3;opacity:.6}
+svg.chart .thresh.diag{stroke:var(--muted2);stroke-dasharray:4 3;opacity:.7}
+svg.chart .thresh.zero{stroke:var(--rule);stroke-width:1}
+svg.chart .thresh.med{stroke:var(--accent2);stroke-dasharray:5 3;opacity:.8}
+svg.chart .thresh-lbl{fill:var(--muted);font-size:10px;
+  font-family:'IBM Plex Mono',monospace}
+svg.chart .km{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+svg.chart .dbl{stroke:var(--rule);stroke-width:2.5;stroke-linecap:round}
+svg.chart circle{transition:r .08s ease}
+
+.chart-legend{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 10px;font-size:12px;
+  color:var(--muted)}
+.chart-legend .lg{display:inline-flex;align-items:center;gap:6px}
+.chart-legend .lg i{width:10px;height:10px;border-radius:3px;display:block;flex:none}
+.chart-foot{margin:8px 0 0;font-size:12px;color:var(--muted2);line-height:1.5}
+
+.chart-tip{position:absolute;transform:translate(-50%,-100%);pointer-events:none;
+  background:var(--ink);color:#F2F5F8;font-size:11.5px;padding:5px 9px;border-radius:4px;
+  white-space:nowrap;z-index:5;box-shadow:var(--shadow);
+  font-family:'IBM Plex Mono',monospace}
+.chart-tip[hidden]{display:none}
+
+@media(min-width:820px){.chart-grid.c-manhattan{grid-template-columns:2.1fr 1fr}}
