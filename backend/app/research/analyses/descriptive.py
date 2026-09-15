@@ -64,8 +64,14 @@ def _variant_label(v) -> str:
     return v.vid or v.key
 
 
-def _gene_of(vid: str, annotations: Dict[str, Dict[str, Any]]) -> Optional[str]:
-    rec = annotations.get(vid) or {}
+def _gene_of(variant, annotations: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """Annotations are keyed by chrom:pos:ref:alt, NOT by rsID.
+
+    Looking them up by the display label — which prefers the rsID when a file
+    carries one — silently missed every record, so the gene column came back
+    empty on a dataset that had full annotations.
+    """
+    rec = annotations.get(variant.key) or {}
     return rec.get("gene") or rec.get("gene_symbol") or None
 
 
@@ -111,7 +117,7 @@ def carrier_frequency_job(spec: Dict[str, Any],
         rows.append({
             "variant": _variant_label(v),
             "chrom": v.chrom, "pos": v.pos, "ref": v.ref, "alt": v.alt,
-            "gene": _gene_of(_variant_label(v), annotations),
+            "gene": _gene_of(v, annotations),
             "n_called": c["n_called"],
             "carriers": carriers,
             "carrier_rate": carriers / c["n_called"],
@@ -183,7 +189,7 @@ def zygosity_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any
         carriers = c["het"] + c["hom_alt"]
         variants.append({
             "variant": _variant_label(v),
-            "gene": _gene_of(_variant_label(v), annotations),
+            "gene": _gene_of(v, annotations),
             "chrom": v.chrom,
             "hom_ref": c["hom_ref"], "het": c["het"], "hom_alt": c["hom_alt"],
             "n_called": c["n_called"],
@@ -254,7 +260,7 @@ def population_frequency_job(spec: Dict[str, Any],
         spread = (max(freqs) - min(freqs)) if len(freqs) > 1 else None
         rows.append({
             "variant": _variant_label(v),
-            "gene": _gene_of(_variant_label(v), annotations),
+            "gene": _gene_of(v, annotations),
             "chrom": v.chrom, "pos": v.pos,
             "overall_allele_freq": _af(overall),
             "n_called": overall["n_called"],
@@ -325,7 +331,7 @@ def diagnostic_yield_job(spec: Dict[str, Any],
         af = _af(c)
         if af is None or af < min_af or af > max_af:
             continue
-        gene = _gene_of(_variant_label(v), annotations)
+        gene = _gene_of(v, annotations)
         if genes_filter and (gene not in genes_filter):
             continue
         qualifying.append(i)
@@ -436,7 +442,7 @@ def segregation_job(spec: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, 
             v = gm.variants[int(i)]
             findings.append({
                 "child": child, "variant": _variant_label(v),
-                "gene": _gene_of(_variant_label(v), annotations),
+                "gene": _gene_of(v, annotations),
                 "chrom": v.chrom, "pos": v.pos,
                 "child_dosage": int(cg[i]), "father_dosage": int(fg[i]),
                 "mother_dosage": int(mg[i]),

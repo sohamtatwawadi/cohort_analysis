@@ -428,8 +428,10 @@ async function renderResearch(state) {
     if (job.status === 'complete') {
       const payload = await api.research.result(state.jobId);
       return `<div class="wrap">
-        ${crumb([{ label: 'Analyses', act: 'rback:' }, { label: job.analysis }])}
-        ${head(job.analysis, 'Result')}
+        ${crumb([{ label: 'Analyses', act: 'rback:' },
+                 { label: analysisTitle(job.analysis) }])}
+        ${head(analysisTitle(job.analysis),
+               `Run on ${esc(String(job.submitted_at).slice(0, 10))}.`)}
         ${renderResult(payload)}
         <div class="actions"><button class="btn" data-act="rback:">← Back to analyses</button>
           <span class="spacer"></span>
@@ -469,6 +471,15 @@ async function renderResearch(state) {
   </div>`;
 }
 
+/* The registry key is an identifier, not a label. Showing it twice — once in
+   the breadcrumb and again as the heading — told the reader nothing and looked
+   like a bug, which it effectively was. */
+function analysisTitle(key) {
+  const form = FORMS[key];
+  if (form && form.title) return form.title;
+  return String(key || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+
 function renderResult(payload) {
   const r = payload.result || {};
   const stamp = r.underpowered_stamp;
@@ -485,6 +496,19 @@ function renderResult(payload) {
 function pct(x, dp) { return x === null || x === undefined ? '—'
   : (Number(x) * 100).toFixed(dp === undefined ? 1 : dp) + '%'; }
 
+/* kit.rate takes {n, d, pct} — passing two bare numbers rendered
+   "undefined / 0 · no denominator" on every row. */
+function rateOf(n, d) {
+  if (!d) return '—';
+  return rate({ n: fmt(n), d: fmt(d), pct: (Math.round(1000 * n / d) / 10) });
+}
+
+const CARRIER_LABELS = {
+  dominant: 'het or hom',
+  het_only: 'heterozygotes',
+  recessive: 'homozygotes',
+};
+
 function carrierFreqResult(d) {
   const top = d.rows[0];
   return `
@@ -494,7 +518,8 @@ function carrierFreqResult(d) {
       { k: 'Samples', v: fmt(d.n_samples), d: 'in the dataset' },
       { k: 'Excluded, low call rate', v: fmt(d.skipped_low_call_rate),
         d: `under ${d.min_calls_required} calls` },
-      { k: 'Carrier definition', v: esc(d.carrier_model), d: 'as configured' },
+      { k: 'Carrier definition', v: esc(CARRIER_LABELS[d.carrier_model] || d.carrier_model),
+        d: 'as configured' },
     ])}
     ${top ? `<p>The most frequent allele is <b>${esc(top.variant)}</b>${
       top.gene ? ` in <span class="gene">${esc(top.gene)}</span>` : ''} at
@@ -508,7 +533,7 @@ function carrierFreqResult(d) {
           : fmt(r.carriers) },
       { label: 'Called', n: true, cell: (r) => fmt(r.n_called) },
       { label: 'Carrier rate', n: true, cell: (r) => r.suppressed ? '—'
-          : rate(r.carriers, r.n_called) },
+          : rateOf(r.carriers, r.n_called) },
       { label: 'Allele freq', n: true, cell: (r) => `<span class="mono">${pct(r.allele_freq, 3)}</span>` },
       { label: 'Het / HomAlt', cell: (r) => `<span class="mono">${fmt(r.het)} / ${fmt(r.hom_alt)}</span>` },
       { label: 'Call rate', n: true, cell: (r) => pct(r.call_rate, 0) },
@@ -613,7 +638,7 @@ function yieldResult(d) {
       { label: 'With a variant', n: true, cell: (g) => g.suppressed ? '&lt;5'
           : fmt(g.with_qualifying_variant) },
       { label: 'Rate', n: true, cell: (g) => g.suppressed ? '—'
-          : rate(g.with_qualifying_variant, g.subjects) },
+          : rateOf(g.with_qualifying_variant, g.subjects) },
     ], d.groups)}` : ''}
     ${note(esc(d.method), 'warn')}`;
 }

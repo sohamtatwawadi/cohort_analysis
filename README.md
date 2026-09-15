@@ -183,10 +183,11 @@ backend/app/research/
 Then switch to Research in the rail. The fixture plants six causal variants at
 OR 1.9, two populations with differing allele frequencies, 30 parent-offspring
 pairs, 40 complete trios and a rare-variant burden signal in three genes, so the
-analyses have a known right answer. The
-association scan recovers five of the six planted variants as its top five hits,
-and the kinship engine recovers exactly the 30 planted pairs (max κ = 0.252
-against a theoretical 0.25).
+analyses have a known right answer. The GWAS scan recovers all six planted
+variants inside its top eight hits, at odds ratios of 1.49–1.78 against a planted
+1.9, with λ_GC = 1.007 — it finds what was planted and nothing else. The kinship
+engine recovers exactly the 30 planted pairs (max κ = 0.252 against a theoretical
+0.25).
 
 ## Capability gating is the product
 
