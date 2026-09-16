@@ -110,8 +110,22 @@ def simulate(n_samples: int = 2400, n_variants: int = 120_000,
         trios.append((child, fa, mo))
 
     # Sprinkle missingness so QC has something to filter.
-    miss = rng.random((n_variants, n_samples)) < 0.002
-    dosages[miss] = -1
+    #
+    # Scattered by index, not by masking a random matrix. The obvious form,
+    #     rng.random((n_variants, n_samples)) < 0.002
+    # materialises a float64 array the full size of the cohort — 3.4 GB at
+    # 150,000 x 3,000 — to decide which 0.2% of cells to drop. It ran fine on a
+    # developer machine and was OOM-killed on a 4 GB instance. Drawing the
+    # coordinates costs about 14 MB instead.
+    #
+    # Duplicate coordinates are harmless: setting a cell to MISSING twice is
+    # idempotent, and at this density collisions are a fraction of a percent, so
+    # the realised missing rate is indistinguishable from the nominal one.
+    n_missing = int(rng.binomial(n_variants * n_samples, 0.002))
+    if n_missing:
+        miss_rows = rng.integers(0, n_variants, n_missing)
+        miss_cols = rng.integers(0, n_samples, n_missing)
+        dosages[miss_rows, miss_cols] = -1
 
     # ---- planted causal signal -------------------------------------------
     # Single-variant causal effects go on COMMON variants. A variant seen four
