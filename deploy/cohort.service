@@ -17,6 +17,9 @@ Environment=PORT=8000
 Environment=COHORT_DB=/var/lib/cohort/germline.duckdb
 Environment=EXPORT_DIR=/var/lib/cohort/exports
 Environment=PYTHONUNBUFFERED=1
+# uvicorn puts the working directory on sys.path, but being explicit means the
+# unit does not depend on that staying true.
+Environment=PYTHONPATH=/opt/cohort
 
 # One worker: DuckDB takes a single writer lock on the database file, so a
 # second process cannot open it and would exit with "Conflicting lock".
@@ -33,7 +36,9 @@ RestartSec=5
 # instance. Give it room before systemd calls the start a failure.
 TimeoutStartSec=600
 
-# The process needs to write its data directory and nothing else.
+# The process needs to write its data directory and nothing else. Everything
+# writable derives from COHORT_DB's parent — the database and its WAL, uploads/,
+# research/ and exports/ — so one ReadWritePaths entry covers all of it.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
