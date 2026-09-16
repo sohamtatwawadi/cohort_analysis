@@ -281,6 +281,14 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int, default=20260913)
     p.add_argument("--name", default="Simulated case-control cohort")
     p.add_argument("--project", default=None)
+    # Ancestry PCs come from a marker subset. The exact in-memory SVD costs far
+    # more than the input it is given — measured at ~620 MB of workspace for a
+    # 6,000 x 3,000 block — so this is the number that decides whether the
+    # generator survives on a small instance, not the variant count. The
+    # leading PCs are common-variant structure and are stable well below
+    # 20,000 markers, which is what this used to pass.
+    p.add_argument("--max-pca-variants", type=int, default=6000,
+                   help="markers used for ancestry PCs (memory-dominant step)")
     args = p.parse_args(argv)
 
     from ..app import db
@@ -333,7 +341,8 @@ def main(argv=None) -> int:
     prof = profile_dataset(gm, ph, annotations=annotations,
                            pedigree=sim.get("pedigree"),
                            coverage_confidence="declared",
-                           compute_genetics=True, max_pca_variants=20000)
+                           compute_genetics=True,
+                           max_pca_variants=args.max_pca_variants)
     print("  density: {} ({})".format(prof.density_class, prof.density_rationale))
     print("  ancestry PCs: {}  relatedness: {}".format(
         (prof.ancestry or {}).get("n_pcs"), prof.relatedness))

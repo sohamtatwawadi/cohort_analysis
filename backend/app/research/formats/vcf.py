@@ -42,6 +42,11 @@ _BUILD_ALIASES = (
 _GT_SPLIT = re.compile(r"[/|]")
 
 
+# Rows converted to int8 per block. Small enough that the transient Python
+# representation stays well under a hundred megabytes at 2,500 samples.
+VCF_BLOCK_ROWS = 4096
+
+
 def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
     """Read a VCF (plain or gzip/bgzip) into a GenotypeMatrix.
 
@@ -54,10 +59,25 @@ def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
     path = Path(path)
     sample_ids: List[str] = []
     variants: List[Variant] = []
-    rows: List[List[int]] = []
     build: Optional[str] = None
     seen_chrom_line = False
     n_records = 0
+
+    # Accumulate in int8 blocks rather than one growing list of lists.
+    #
+    # A list of N lists of M Python ints costs ~8 bytes per pointer plus the
+    # list headers, so 150,000 x 2,504 — a thinned single chromosome of 1000
+    # Genomes — is about 3 GB before it becomes a 358 MB int8 array. That is
+    # the whole budget of a small instance spent on a representation that gets
+    # thrown away. Converting every few thousand rows keeps the transient cost
+    # to one block.
+    rows: List[List[int]] = []
+    blocks: List[np.ndarray] = []
+
+    def flush() -> None:
+        if rows:
+            blocks.append(np.asarray(rows, dtype=np.int8))
+            del rows[:]
 
     with _open_text(path) as fh:
         for line in fh:
@@ -80,13 +100,17 @@ def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
                 break
             n_records += 1
             _parse_record(line, len(sample_ids), variants, rows)
+            if len(rows) >= VCF_BLOCK_ROWS:
+                flush()
+    flush()
 
     if not seen_chrom_line:
         raise ValueError(
             "{}: no #CHROM header line found (file empty or not a VCF)".format(path))
 
-    if rows:
-        dosages = np.asarray(rows, dtype=np.int8)
+    if blocks:
+        dosages = blocks[0] if len(blocks) == 1 else np.concatenate(blocks, axis=0)
+        del blocks[:]
     else:
         dosages = np.empty((0, len(sample_ids)), dtype=np.int8)
 
