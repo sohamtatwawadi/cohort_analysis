@@ -67,6 +67,42 @@ Drawing them any lower produces monomorphic sites that are present in the file
 and absent from every sample, which pass no filter and make a gene-based test
 look broken when it is behaving correctly.
 
+#### 1000 Genomes — real public data
+
+```bash
+.venv/bin/python -m backend.tools.fetch_1000g --chrom 22 --target-variants 150000
+```
+
+Pulls chromosome 22 of phase 3 from the AWS Registry of Open Data — no
+credentials, no account — with the sample panel, and registers it alongside the
+synthetic cohort. 2,504 samples, 26 populations, 5 super-populations.
+
+The two datasets do different jobs and both are worth having:
+
+| | Synthetic cohort | 1000 Genomes |
+|---|---|---|
+| Ancestry structure | Two invented populations | **Real** — 26 populations, PCA shows continental clusters |
+| Allele-frequency spectrum | Drawn from a model | **Real** |
+| Case/control, age, follow-up | Planted, with known effects | **None** |
+| Analyses available | All ten | Descriptive only — five lock |
+
+**1000 Genomes has no phenotypes**, so association, GWAS, burden, survival and
+PRS stay locked on it. That is the capability matrix telling the truth, not a
+gap: there is no disease status to test against. Nothing in the loader invents
+one — these are real consented samples, and attaching a fabricated case/control
+column to them to make a demo look fuller would be inventing clinical data
+about real people.
+
+Sizing: the full chr22 is 1.1M variants × 2,504 samples = **2.6 GB as int8**, so
+it is thinned by keeping one record in N *across the chromosome* — not the first
+N, which would be the short arm and nothing else. At 150,000 variants the matrix
+is 358 MB. The loader caches the download under `data/1000g/`, so a re-run does
+not re-fetch 205 MB.
+
+Phase 3 is **GRCh37**, and the loader declares it. The app refuses to guess a
+build because GRCh37 and GRCh38 coordinates overlap, so a wrong declaration
+silently corrupts every annotation downstream.
+
 ### 1.1 Getting your own data in
 
 **Research Mode — from the browser.** *Uploaded data → Register a dataset*.

@@ -23,11 +23,17 @@ const pct1 = (x) => (x === null || x === undefined ? '—' : (x * 100).toFixed(1
 
 export function datasetDashboard(d) {
   if (!d) return '';
+
+  /* Which panel earns the wide column depends on the dataset. A VCF with no
+     gene annotations — 1000 Genomes, for one — has nothing to put in the gene
+     panel, so giving it two thirds of the width to display an explanation
+     while 26 real populations are squeezed into the remainder is the wrong way
+     round. */
+  const hasGenes = (d.top_genes || []).length > 0;
   return `
     ${kpiRow(d)}
-    <div class="cols c21">
-      ${topGenes(d)}
-      ${composition(d)}
+    <div class="cols ${hasGenes ? 'c21' : 'c12'}">
+      ${hasGenes ? topGenes(d) + composition(d) : composition(d) + topGenes(d)}
     </div>
     <div class="cols c2">
       ${spectrum(d)}

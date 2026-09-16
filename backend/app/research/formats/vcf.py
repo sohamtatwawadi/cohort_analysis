@@ -47,7 +47,8 @@ _GT_SPLIT = re.compile(r"[/|]")
 VCF_BLOCK_ROWS = 4096
 
 
-def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
+def read_vcf(path, max_variants: Optional[int] = None,
+             every_nth: int = 1) -> GenotypeMatrix:
     """Read a VCF (plain or gzip/bgzip) into a GenotypeMatrix.
 
     `max_variants` caps the number of *records read from the file*, applied
@@ -55,6 +56,14 @@ def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
     yields exactly that many rows, and one with multi-allelic sites may yield
     more. Capping the input rather than the output keeps the truncation point
     reproducible and never leaves a site half-split.
+
+    `every_nth` keeps one record in N, spread across the whole file. Capping
+    alone takes the first N records, which on a chromosome-scale VCF means the
+    short arm and nothing else — a thinned dataset has to sample the length of
+    the chromosome to be representative. Skipped records are never parsed: the
+    genotype columns are the expensive part, and at 2,500 samples a line is
+    ~10 KB of text, so parsing what we intend to discard would dominate the
+    read.
     """
     path = Path(path)
     sample_ids: List[str] = []
@@ -62,6 +71,7 @@ def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
     build: Optional[str] = None
     seen_chrom_line = False
     n_records = 0
+    n_kept = 0
 
     # Accumulate in int8 blocks rather than one growing list of lists.
     #
@@ -96,9 +106,14 @@ def read_vcf(path, max_variants: Optional[int] = None) -> GenotypeMatrix:
             if not seen_chrom_line:
                 raise ValueError(
                     "{}: data line before the #CHROM header — not a valid VCF".format(path))
-            if max_variants is not None and n_records >= max_variants:
+            if max_variants is not None and n_kept >= max_variants:
                 break
             n_records += 1
+            # Skip before parsing — this is the cheap branch, and it is the
+            # whole point of thinning.
+            if every_nth > 1 and (n_records - 1) % every_nth:
+                continue
+            n_kept += 1
             _parse_record(line, len(sample_ids), variants, rows)
             if len(rows) >= VCF_BLOCK_ROWS:
                 flush()

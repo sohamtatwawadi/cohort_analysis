@@ -56,7 +56,15 @@ MIN_CELL = 5
 
 
 # --------------------------------------------------------------- persistence --
-def _ensure_table() -> None:
+def ensure_table() -> None:
+    """Create the cache table if it is absent.
+
+    Public because importing a bundle has to create it BEFORE inserting the
+    cached rows: it is created lazily on first use, so in a fresh database the
+    import would find no such table and silently drop the cache — the one thing
+    that stops a small instance walking the whole genotype matrix to draw the
+    landing screen.
+    """
     db.execute("""
         CREATE TABLE IF NOT EXISTS dataset_dashboard (
             dataset_id     VARCHAR PRIMARY KEY,
@@ -68,7 +76,7 @@ def _ensure_table() -> None:
 
 def get(dataset_id: str, refresh: bool = False) -> Dict[str, Any]:
     """Cached dashboard, computed on first request."""
-    _ensure_table()
+    ensure_table()
     if not refresh:
         row = db.row("SELECT dashboard_json FROM dataset_dashboard WHERE dataset_id = ?",
                      [dataset_id])
@@ -84,7 +92,7 @@ def get(dataset_id: str, refresh: bool = False) -> Dict[str, Any]:
 
 
 def invalidate(dataset_id: str) -> None:
-    _ensure_table()
+    ensure_table()
     db.execute("DELETE FROM dataset_dashboard WHERE dataset_id = ?", [dataset_id])
 
 

@@ -136,8 +136,9 @@ kbd{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A97A4;
 .cols{display:grid;gap:16px}
 .c2{grid-template-columns:1fr 1fr}
 .c21{grid-template-columns:1.9fr 1fr}
+.c12{grid-template-columns:1.9fr 1fr}
 .cols > *{min-width:0}
-@media(max-width:1000px){.c2,.c21{grid-template-columns:1fr}}
+@media(max-width:1000px){.c2,.c21,.c12{grid-template-columns:1fr}}
 
 /* --------------------------------------------------------------- buttons -- */
 .btn{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r-sm);

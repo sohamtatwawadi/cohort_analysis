@@ -384,3 +384,54 @@ def assert_invariants(gm: GenotypeMatrix) -> None:
     assert gm.dosages.dtype == np.int8
     assert set(np.unique(gm.dosages)) <= {MISSING, 0, 1, 2}
     assert gm.source_files and all(isinstance(f, str) for f in gm.source_files)
+
+
+# ---------------------------------------------------- representative thinning --
+def test_every_nth_samples_across_the_file_not_just_the_start(tmp_path):
+    """max_variants alone takes the FIRST n records. On a chromosome-scale VCF
+    that is the short arm and nothing else, so a thinned dataset has to sample
+    the whole length to be representative."""
+    from backend.app.research.formats import vcf as vcf_mod
+
+    p = tmp_path / "long.vcf"
+    header = ("##fileformat=VCFv4.2\n"
+              "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\n")
+    rows = "".join("1\t{}\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\t0/0\n".format(1000 + i * 10)
+                   for i in range(1000))
+    p.write_text(header + rows)
+
+    every = vcf_mod.read_vcf(p, every_nth=10)
+    assert every.n_variants == 100
+    positions = [v.pos for v in every.variants]
+    # Spread across the file, and starting at the first record.
+    assert positions[0] == 1000
+    assert positions[-1] == 1000 + 990 * 10
+    assert positions == sorted(positions)
+
+    capped = vcf_mod.read_vcf(p, max_variants=100)
+    assert [v.pos for v in capped.variants][-1] == 1000 + 99 * 10, (
+        "capping should stop early — that is the behaviour every_nth exists to "
+        "avoid")
+
+
+def test_every_nth_and_max_variants_compose(tmp_path):
+    from backend.app.research.formats import vcf as vcf_mod
+    p = tmp_path / "c.vcf"
+    p.write_text("##fileformat=VCFv4.2\n"
+                 "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+                 + "".join("1\t{}\t.\tA\tG\t.\tPASS\t.\tGT\t0/1\n".format(100 + i)
+                           for i in range(500)))
+    gm = vcf_mod.read_vcf(p, max_variants=20, every_nth=5)
+    assert gm.n_variants == 20, "the cap applies to KEPT records, not records read"
+    assert [v.pos for v in gm.variants] == [100 + i * 5 for i in range(20)]
+
+
+def test_every_nth_of_one_is_the_unthinned_read(tmp_path):
+    from backend.app.research.formats import vcf as vcf_mod
+    p = tmp_path / "d.vcf"
+    p.write_text("##fileformat=VCFv4.2\n"
+                 "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+                 + "".join("1\t{}\t.\tA\tG\t.\tPASS\t.\tGT\t1/1\n".format(200 + i)
+                           for i in range(50)))
+    assert vcf_mod.read_vcf(p, every_nth=1).n_variants == 50
+    assert vcf_mod.read_vcf(p).n_variants == 50
