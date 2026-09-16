@@ -4,7 +4,13 @@
     {
       "name": "germline",
       "runtimeExecutable": "/Users/sohamwork/Documents/Projects/Cohort_analysis/.venv/bin/uvicorn",
-      "runtimeArgs": ["backend.app.main:app", "--host", "127.0.0.1", "--port", "8077"],
+      "runtimeArgs": [
+        "backend.app.main:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8077"
+      ],
       "port": 8077
     }
   ]

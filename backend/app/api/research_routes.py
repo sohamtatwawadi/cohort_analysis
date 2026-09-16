@@ -15,7 +15,8 @@ from fastapi import APIRouter, Body, HTTPException, Query, UploadFile, File, For
 from pydantic import BaseModel, Field
 
 from .. import config, db
-from ..research import capability, jobs, registry, store as rstore, variantset
+from ..research import (capability, dashboard, jobs, registry,
+                        store as rstore, variantset)
 from ..research import analyses  # noqa: F401  — registers the analyses
 from ..research.formats import detect
 from ..research.profile import profile_dataset
@@ -319,6 +320,22 @@ def submit_job(dataset_id: str, req: JobRequest,
         raise HTTPException(403, detail={"message": str(exc), "locked": True})
     except KeyError as exc:
         raise HTTPException(400, str(exc))
+
+
+@router.get("/datasets/{dataset_id}/dashboard")
+def dataset_dashboard(dataset_id: str, refresh: bool = Query(False),
+                      project_id: Optional[str] = Query(None)) -> Dict[str, Any]:
+    """Level-1 summary of what the dataset contains (§3.1, descriptive).
+
+    Cached: the top-genes panel walks the whole genotype matrix, so recomputing
+    it per page view would make this the most expensive screen in the product.
+    """
+    if not registry.get_dataset(dataset_id, project_id):
+        raise HTTPException(404, "unknown dataset")
+    try:
+        return {"dashboard": dashboard.get(dataset_id, refresh=refresh)}
+    except FileNotFoundError as exc:
+        raise HTTPException(409, "dataset payload is missing: {}".format(exc))
 
 
 @router.get("/datasets/{dataset_id}/jobs")

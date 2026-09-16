@@ -52,6 +52,7 @@ export const api = {
     datasets: (pid) => get(`/api/research/projects/${pid}/datasets`),
     dataset: (did) => get(`/api/research/datasets/${did}`),
     ingest: (pid, body) => post(`/api/research/projects/${pid}/datasets/ingest`, body),
+    dashboard: (did) => get(`/api/research/datasets/${did}/dashboard`),
     upload: async (pid, form) => {
       // No Content-Type header — the browser sets the multipart boundary, and
       // overriding it produces a body the server cannot parse.

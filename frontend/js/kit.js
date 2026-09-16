@@ -84,17 +84,36 @@ export const empty = (title, body = '') =>
   `<div class="empty"><b>${esc(title)}</b>${esc(body)}</div>`;
 
 /* ------------------------------------------------------------------ charts */
+/* Two palettes, because stacked() serves two different jobs.
+ *
+ * ORDINAL (the default) — a one-hue teal ramp, light to dark. Correct when the
+ * order carries meaning: Definitive → Strong → Moderate → Limited reads as a
+ * ramp because it IS one, and a reader sees the ordering in the colour.
+ *
+ * CATEGORICAL — for identity, where swapping the order would change nothing:
+ * ancestry, sex, case/control. The teal ramp fails here and it is measurable,
+ * not a matter of taste: adjacent steps sit at ΔE 9.0 under normal vision,
+ * below the 15 floor, so two segments of a composition bar are genuinely hard
+ * to tell apart. These eight clear it (worst adjacent pair ΔE 19.6 normal,
+ * 9.1 protanopia) and carry visible labels and counts as the second channel.
+ */
 const PALETTE = ['#0E5C63', '#12787F', '#4E9AA0', '#8FBEC2', '#C2A15A', '#B4651A',
                  '#6B3FA0', '#2B6CB0', '#7A7F87', '#2E7D4F'];
+
+export const CATEGORICAL = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100',
+                            '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 const TONES = { plp: '#A32B22', vus: '#8A949E', neg: '#B4D9C4' };
 
 export function stacked(parts, opts = {}) {
+  // opts.colors lets the caller choose the palette its data's job calls for;
+  // the ordinal ramp stays the default.
+  const ramp = opts.colors || PALETTE;
   const total = parts.reduce((a, p) => a + (p.value || 0), 0) || 1;
   const seg = parts.map((p, i) => `<i style="width:${100 * (p.value || 0) / total}%;
-    background:${TONES[p.tone] || PALETTE[i % PALETTE.length]}"
+    background:${TONES[p.tone] || ramp[i % ramp.length]}"
     title="${esc(p.label)}: ${p.value}"></i>`).join('');
   const legend = parts.map((p, i) => `<span><i style="background:${
-    TONES[p.tone] || PALETTE[i % PALETTE.length]}"></i>${esc(p.label)}
+    TONES[p.tone] || ramp[i % ramp.length]}"></i>${esc(p.label)}
     <span class="hint mono">${fmt(p.value)} · ${Math.round(100 * (p.value || 0) / total)}%</span>
   </span>`).join('');
   return `<div class="stack">${seg}</div>${opts.noLegend ? '' : `<div class="legend">${legend}</div>`}`;

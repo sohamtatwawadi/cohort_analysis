@@ -12,6 +12,7 @@ import { api } from './api.js';
 import {
   bars, card, empty, esc, f1, fmt, head, note, rate, stat, table, tag,
 } from './kit.js';
+import { datasetDashboard } from './datasetdash.js';
 
 export async function render(state) {
   if (state.mode === 'research') return renderResearch(state);
@@ -185,29 +186,39 @@ function check({ pass, title, summary, more, detail }) {
 }
 
 /* ================================================================ research == */
-function renderResearch(state) {
+async function renderResearch(state) {
   const p = state.profile || {};
   const caps = state.caps || [];
   const available = caps.filter((c) => c.available);
   const locked = caps.filter((c) => !c.available);
-  const anc = p.ancestry || {};
-  const rel = p.relatedness || {};
+
+  /* The dashboard answers "what IS this data?", which a reader needs before
+     "what can it support?". It is fetched rather than derived from the profile
+     because the gene panel needs the genotype matrix; the server caches it.
+     A failure here must not take the capability matrix down with it — that is
+     the part that gates the analyses. */
+  let dash = null;
+  try {
+    if (state.datasetId) {
+      dash = (await api.research.dashboard(state.datasetId)).dashboard;
+    }
+  } catch (err) {
+    dash = null;
+  }
 
   return `<div class="wrap">
-    ${head('What can this data support?',
-      'We profiled the dataset on upload. Analyses unlock based on what it can actually '
-      + 'answer — and locked ones tell you exactly what is missing.', 'Step 2 of 4')}
+    ${head(esc((state.dataset || {}).name || 'This dataset'),
+      'What the data contains, and which analyses it can actually answer. '
+      + 'Locked analyses state exactly what is missing.', 'Step 2 of 4')}
 
-    ${stat([
+    ${dash ? datasetDashboard(dash) : `${stat([
       { k: 'Samples', v: fmt(p.n_samples), d: `${fmt(p.n_unrelated || 0)} unrelated` },
       { k: 'Variants', v: fmt(p.n_variants), d: esc(p.density_class || '') },
-      { k: 'Ancestry PCs', v: fmt(anc.n_pcs || 0), d: 'for adjustment' },
-      { k: 'Related pairs', v: fmt(rel.n_related_pairs || 0), d: 'detected by kinship' },
-      { k: 'Ready to run', v: String(available.length), d: `${locked.length} need more data` },
+      { k: 'Ready to run', v: String(available.length),
+        d: `${locked.length} need more data` },
     ])}
-
-    ${p.ascertained ? note(`<b>This looks like a referral-selected cohort.</b>
-      ${esc(p.ascertainment_rationale)}`, 'warn') : ''}
+    ${note('The dataset summary could not be built, so only the capability '
+         + 'matrix is shown below.', 'warn')}`}
 
     ${card(`Ready to run — ${available.length}`,
       available.length
