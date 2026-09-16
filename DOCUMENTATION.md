@@ -103,6 +103,37 @@ Phase 3 is **GRCh37**, and the loader declares it. The app refuses to guess a
 build because GRCh37 and GRCh38 coordinates overlap, so a wrong declaration
 silently corrupts every annotation downstream.
 
+#### Moving a dataset and its results between machines
+
+```bash
+# where there is memory to spare
+python -m backend.tools.dataset_bundle export ds-abc123 --out demo.tar.gz
+
+# on the target
+python -m backend.tools.dataset_bundle import-bundle demo.tar.gz
+```
+
+A t3.medium cannot hold a genome-wide matrix and a GWAS at the same time — the
+measured peak for generating the demo cohort is 1.75 GB, and a GWAS adds ~1 GB
+on top. The results, however, are small. So the expensive work happens
+elsewhere and the finished artifacts travel: the dataset row, profile,
+capability matrix, phenotype summary, **every completed analysis and its
+result**, the cached dashboard, and the genotype payload.
+
+Two details that matter:
+
+- The table list comes from `registry.DERIVED_TABLES`, which is what deletion
+  walks. A new derived table is then learned about in one place, rather than
+  producing a bundle that silently omits whatever was added last.
+- The **cached dashboard travels**. Without it, the first view on the target
+  walks the whole genotype matrix to build the gene panel — 30–60 seconds on a
+  small instance. The cache table is created lazily on first use, so the
+  importer creates it explicitly before inserting; otherwise the import finds
+  no such table and drops exactly the cache that exists to avoid that walk.
+
+A bundle holds genotype data. It belongs on the target machine and nowhere
+public — not a release asset, not an object store without access control.
+
 ### 1.1 Getting your own data in
 
 **Research Mode — from the browser.** *Uploaded data → Register a dataset*.
@@ -555,7 +586,7 @@ cohort stores criteria, never a member list.
 | `test_loader.py` | 26 | VariMAT dedup, reviewable subset, fingerprinting, QC |
 | `test_compiler_and_repro.py` | 24 | Query compiler contract, reproducibility, manifest |
 | `test_research_gating.py` | 21 | Upload validation, capability matrix, override, deletion |
-| `test_research_formats.py` | 39 | VCF and PLINK readers |
+| `test_research_formats.py` | 45 | VCF and PLINK readers, thinning, density classes |
 | `test_research_glm.py` | 56 | Linear / logistic / Firth / HC3 / BH |
 | `test_research_genetics.py` | 35 | PCA, KING kinship, HWE exact, sex check |
 | `test_research_skat_survival.py` | 61 | Davies, SKAT calibration, KM, Cox, competing risks |
