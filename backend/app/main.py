@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from fastapi import FastAPI, HTTPException
@@ -25,8 +26,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# The UI is served from this same origin, so cross-origin access is not needed
+# for normal use. A wildcard was fine on localhost; on a reachable host it lets
+# any page in a visitor's browser call this API, so it is now opt-in via
+# CORS_ORIGINS (comma-separated) and off by default.
+_cors = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+if _cors:
+    app.add_middleware(
+        CORSMiddleware, allow_origins=_cors,
+        allow_methods=["*"], allow_headers=["*"])
 
 app.include_router(router, prefix="/api")
 app.include_router(research_router, prefix="/api/research")

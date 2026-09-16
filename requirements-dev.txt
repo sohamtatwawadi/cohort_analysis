@@ -1,0 +1,5 @@
+# Test and development dependencies. Not installed in production.
+-r requirements.txt
+
+pytest>=8.0
+httpx>=0.27          # fastapi.testclient

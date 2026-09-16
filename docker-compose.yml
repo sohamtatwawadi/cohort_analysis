@@ -1,0 +1,25 @@
+# Single service, one named volume. Enough for an EC2 host running just this.
+services:
+  cohort:
+    build: .
+    image: impactomics-cohort:latest
+    restart: unless-stopped
+    ports:
+      # Bound to localhost only: terminate TLS in nginx on the host and proxy
+      # to this. Publishing 0.0.0.0:8000 would expose an app that has no
+      # authentication directly to the internet.
+      - "127.0.0.1:8000:8000"
+    environment:
+      PORT: "8000"
+      COHORT_DB: /data/germline.duckdb
+      EXPORT_DIR: /data/exports
+      # CORS_ORIGINS: https://cohort.example.com
+    volumes:
+      - cohort-data:/data
+    # DuckDB holds the whole genotype matrix in memory during an analysis;
+    # 459 MB just to load the 150k-variant demo dataset, ~1 GB peak during a
+    # GWAS. Below about 2 GB the research analyses fail with an OOM kill.
+    mem_limit: 4g
+
+volumes:
+  cohort-data:

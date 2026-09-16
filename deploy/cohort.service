@@ -1,0 +1,44 @@
+# systemd unit for a plain EC2 host (no Docker).
+#   sudo cp deploy/cohort.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cohort
+
+[Unit]
+Description=ImpactOmics Cohort Analytics
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=cohort
+Group=cohort
+WorkingDirectory=/opt/cohort
+
+Environment=PORT=8000
+Environment=COHORT_DB=/var/lib/cohort/germline.duckdb
+Environment=EXPORT_DIR=/var/lib/cohort/exports
+Environment=PYTHONUNBUFFERED=1
+
+# One worker: DuckDB takes a single writer lock on the database file, so a
+# second process cannot open it and would exit with "Conflicting lock".
+ExecStart=/opt/cohort/.venv/bin/uvicorn backend.app.main:app \
+    --host 127.0.0.1 --port ${PORT} --workers 1
+
+# Bound to loopback on purpose. nginx terminates TLS and proxies to it; the app
+# itself has no authentication, so it must not be reachable directly.
+
+Restart=always
+RestartSec=5
+
+# First boot seeds the analytics store, which takes a while on a small
+# instance. Give it room before systemd calls the start a failure.
+TimeoutStartSec=600
+
+# The process needs to write its data directory and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cohort
+
+[Install]
+WantedBy=multi-user.target

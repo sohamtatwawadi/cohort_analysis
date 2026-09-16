@@ -1,0 +1,25 @@
+# Keep the build context small and the image free of local state.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Never bake genomic data into an image — it holds genotype and clinical
+# records, and an image gets pushed to registries and pulled by anyone with
+# access. The container mounts a volume for this instead.
+data/
+
+.git/
+.gitignore
+.github/
+.claude/
+tests/
+.DS_Store
+*.md
+!README.md
+Cohort-Analysis-Beginners-Guide.pdf
+ImpactOmics-Cohort-Phase1-Prototype.html
+frontend/_classic/
