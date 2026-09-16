@@ -61,11 +61,12 @@ sudo -u "$APP_USER" "$APP_DIR/.venv/bin/pip" install -q -r "$APP_DIR/requirement
   || die "pip install failed"
 
 # Prove the dependency set is complete before wiring up a service that would
-# otherwise crash-loop on an ImportError.
+# otherwise crash-loop on an ImportError. The check lives in its own file so it
+# can be tested rather than buried in a heredoc.
 say "Verifying the app imports"
-sudo -u "$APP_USER" env PYTHONPATH="$APP_DIR" "$APP_DIR/.venv/bin/python" \
-  -c "from backend.app.main import app; print('  routes:', len(app.routes))" \
-  || die "the app could not be imported — see the traceback above"
+sudo -u "$APP_USER" env PYTHONPATH="$APP_DIR" \
+  "$APP_DIR/.venv/bin/python" "$APP_DIR/deploy/verify_install.py" \
+  || die "the app did not import cleanly — see above"
 
 # --------------------------------------------------------------- service --
 say "Installing the systemd unit"
@@ -85,7 +86,11 @@ if grep -q "default_server" /etc/nginx/nginx.conf 2>/dev/null; then
 fi
 
 if [[ ! -f /etc/nginx/.htpasswd ]]; then
-  PASS="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)"
+  # openssl, not `tr </dev/urandom | head -c 16`. head closes the pipe after 16
+  # bytes, tr dies with SIGPIPE, and `set -o pipefail` turns that into exit 141
+  # — which `set -e` then acts on. The script died here, silently, because this
+  # line had no `|| die` to report it.
+  PASS="$(openssl rand -hex 8)"
   htpasswd -bc /etc/nginx/.htpasswd demo "$PASS" >/dev/null 2>&1
   chown root:nginx /etc/nginx/.htpasswd && chmod 640 /etc/nginx/.htpasswd
   printf '%s' "$PASS" > /root/cohort-demo-password
