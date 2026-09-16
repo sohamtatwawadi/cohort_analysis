@@ -34,6 +34,12 @@ from .validate import harmonise_chrom
 GENOME_WIDE_MIN_VARIANTS = 100_000
 GENOME_WIDE_MIN_CHROMS = 20
 EXOME_MIN_VARIANTS = 20_000
+
+# Above this on one or two chromosomes, the dataset is chromosome-scale rather
+# than a single gene. Set at the exome floor deliberately: no assay targeting
+# one gene produces twenty thousand sites, so anything above it on a single
+# chromosome is a region or a whole chromosome, not a gene.
+SINGLE_CHROMOSOME_MIN_VARIANTS = EXOME_MIN_VARIANTS
 EXOME_MIN_GENES = 5_000
 
 
@@ -47,7 +53,8 @@ class DataProfile:
     n_chromosomes: int = 0
     chromosomes: List[str] = field(default_factory=list)
     variants_per_chromosome: Dict[str, int] = field(default_factory=dict)
-    density_class: str = "targeted"        # genome_wide | exome | targeted | single_gene
+    density_class: str = "targeted"        # genome_wide | exome | targeted
+                                           # | single_chromosome | single_gene
     density_rationale: str = ""
 
     # genotype quality
@@ -102,6 +109,16 @@ def classify_density(n_variants: int, chromosomes: Sequence[str],
                 "density_rationale": "{:,} variants across {} chromosomes — consistent "
                                      "with exome capture".format(n_variants, n_chrom)}
     if n_chrom <= 2:
+        # Chromosome count alone does not separate a single gene from a whole
+        # chromosome, and calling 123,000 variants on chr22 "single_gene" is
+        # simply wrong: a gene spans tens to hundreds of kilobases, a
+        # chromosome tens of megabases. No assay of one gene yields this many
+        # sites, so the variant count is the discriminator available here.
+        if n_variants >= SINGLE_CHROMOSOME_MIN_VARIANTS:
+            return {"density_class": "single_chromosome",
+                    "density_rationale":
+                        "{:,} variants on {} chromosome(s) — chromosome-scale, "
+                        "but not genome-wide".format(n_variants, n_chrom)}
         return {"density_class": "single_gene",
                 "density_rationale": "{:,} variants on {} chromosome(s)".format(
                     n_variants, n_chrom)}

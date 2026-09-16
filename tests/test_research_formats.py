@@ -435,3 +435,49 @@ def test_every_nth_of_one_is_the_unthinned_read(tmp_path):
                            for i in range(50)))
     assert vcf_mod.read_vcf(p, every_nth=1).n_variants == 50
     assert vcf_mod.read_vcf(p).n_variants == 50
+
+
+# ----------------------------------------------------------- density labels --
+def test_a_whole_chromosome_is_not_called_a_single_gene():
+    """The label a reader sees. Classifying on chromosome count alone put
+    123,347 variants spanning chr22 — a thinned chromosome of 1000 Genomes —
+    into "single_gene". A gene spans tens to hundreds of kilobases; no assay of
+    one gene yields a hundred thousand sites."""
+    from backend.app.research.profile import classify_density
+
+    gene = classify_density(1_200, ["17"])
+    assert gene["density_class"] == "single_gene"
+
+    chrom = classify_density(123_347, ["22"])
+    assert chrom["density_class"] == "single_chromosome", chrom
+    assert "chromosome-scale" in chrom["density_rationale"]
+    # And it must not claim to be genome-wide either, which is what gates GWAS.
+    assert chrom["density_class"] not in ("genome_wide", "exome")
+
+
+def test_density_classes_still_separate_panel_from_genome():
+    from backend.app.research.profile import classify_density
+    autosomes = [str(c) for c in range(1, 23)]
+    assert classify_density(4_000, ["1", "2", "3", "7"])["density_class"] == "targeted"
+    assert classify_density(500_000, autosomes)["density_class"] == "genome_wide"
+
+
+def test_a_single_chromosome_does_not_unlock_genome_wide_analyses():
+    """The point of the label: GWAS, burden and PRS need genome-wide data, and
+    one chromosome is not that however many variants it carries."""
+    from backend.app.research import capability
+    from backend.app.research.profile import DataProfile
+
+    p = DataProfile(n_samples=2504, n_variants=123_347,
+                    density_class="single_chromosome", genome_build="GRCh37")
+    p.phenotypes = {"status": {"kind": "binary", "cases": 1200, "controls": 1300}}
+    p.n_binary_phenotypes = 1
+    p.max_cases = 1200
+    p.has_controls = True
+    p.ancestry = {"n_pcs": 10}
+    p.mean_call_rate = 0.99
+
+    by_name = {c.analysis: c for c in capability.assess(p)}
+    for locked in ("gwas", "prs"):
+        assert not by_name[locked].available, (
+            "{} unlocked on a single chromosome".format(locked))
